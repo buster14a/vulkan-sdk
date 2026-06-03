@@ -30,6 +30,7 @@ Environment variables:
   SLANG_ENABLE_DXIL      ON/OFF for Slang DXIL support (default: OFF)
   ENABLE_WSI             Linux only: ON/OFF for XCB, Xlib, Xrandr and Wayland support (default: ON)
   PREFER_STATIC_LIBS     ON/OFF to prefer static component libraries where practical (default: ON)
+  PYTHON                 Python interpreter to use for CMake codegen/dependency scripts (default: auto-detect python3/python)
   WINDOWS_CMAKE_C_COMPILER   Direct Clang C compiler for Windows builds (default: clang)
   WINDOWS_CMAKE_CXX_COMPILER Direct Clang C++ compiler for Windows builds (default: clang++)
   WINDOWS_CLANG_TARGET   MSVC ABI Clang target for Windows builds (default: inferred from arch)
@@ -124,6 +125,49 @@ case "$host_arch" in
   amd64|AMD64) host_arch=x86_64 ;;
 esac
 host_os=$(uname -s)
+
+if [[ "$host_os" == Darwin* ]]; then
+  # Homebrew Python's pyexpat extension may otherwise bind to macOS' older
+  # /usr/lib/libexpat.1.dylib under self-hosted runners, causing XML codegen
+  # scripts in SPIRV-Tools/Vulkan-Profiles to fail at build time.
+  for expat_prefix in /opt/homebrew/opt/expat /usr/local/opt/expat; do
+    if [[ -d "$expat_prefix/lib" ]]; then
+      export DYLD_LIBRARY_PATH="$expat_prefix/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+      export DYLD_FALLBACK_LIBRARY_PATH="$expat_prefix/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+      break
+    fi
+  done
+fi
+
+find_python() {
+  local candidates=()
+  if [[ -n "${PYTHON:-}" ]]; then
+    candidates+=("$PYTHON")
+  fi
+  candidates+=(python3 python)
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+    if "$candidate" - <<'PY' >/dev/null 2>&1
+import json
+import pathlib
+import xml.etree.ElementTree as ET
+ET.fromstring('<root><child /></root>')
+PY
+    then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+
+  echo "Could not find a usable Python interpreter. Install python3 or python with json/pathlib/xml.etree.ElementTree support, or set PYTHON=/path/to/python." >&2
+  return 2
+}
+
+python_cmd=$(find_python)
 
 normalize_bool() {
   local name=$1
@@ -341,6 +385,7 @@ cmake_configure() {
     "${cmake_generator_args[@]}"
     "${cmake_configure_type_args[@]}"
     -DCMAKE_INSTALL_PREFIX="$install_prefix"
+    -DPython3_EXECUTABLE="$python_cmd"
   )
 
   if [[ -n "$prefix_path" ]]; then
@@ -543,10 +588,10 @@ build_shaderc() {
   # update_shaderc_sources.py creates the actual shaderc CMake source tree in
   # ./src, matching LunarG's SDK config for shaderc.
   if [[ -f "$shaderc_source/update_shaderc_sources.py" ]]; then
-    (cd "$shaderc_source" && (python3 update_shaderc_sources.py || python update_shaderc_sources.py))
+    (cd "$shaderc_source" && "$python_cmd" update_shaderc_sources.py)
     shaderc_source="$shaderc_source/src"
   elif [[ -f "$shaderc_source/utils/git-sync-deps" ]]; then
-    (cd "$shaderc_source" && (python3 utils/git-sync-deps || python utils/git-sync-deps))
+    (cd "$shaderc_source" && "$python_cmd" utils/git-sync-deps)
   fi
 
   cmake_install shaderc "$shaderc_source" "$build_dir/shaderc-$platform-$arch" \
@@ -561,7 +606,7 @@ patch_extension_layer_for_windows_clang() {
   fi
 
   local cmake_file="$src_dir/Vulkan-ExtensionLayer/layers/CMakeLists.txt"
-  python3 - "$cmake_file" <<'PY'
+  "$python_cmd" - "$cmake_file" <<'PY'
 from pathlib import Path
 import sys
 
@@ -604,7 +649,7 @@ patch_validation_layers_for_windows_clang() {
     # mimalloc is an optional performance allocator for VVL, so skip it only for
     # Windows ARM64 and let VVL fall back to the CRT allocator.
     local known_good="$src_dir/Vulkan-ValidationLayers/scripts/known_good.json"
-    python3 - "$known_good" <<'PY'
+    "$python_cmd" - "$known_good" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -628,7 +673,7 @@ patch_vulkan_profiles_for_windows_clang() {
   fi
 
   local cmake_file="$src_dir/Vulkan-Profiles/layer/CMakeLists.txt"
-  python3 - "$cmake_file" <<'PY'
+  "$python_cmd" - "$cmake_file" <<'PY'
 from pathlib import Path
 import sys
 

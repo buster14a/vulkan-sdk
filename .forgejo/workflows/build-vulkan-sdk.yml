@@ -73,7 +73,7 @@ on:
 
 jobs:
   build:
-    name: ${{ matrix.platform }} ${{ matrix.arch }} SDK
+    name: ${{ matrix.runner }} SDK
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
 
@@ -87,32 +87,30 @@ jobs:
         include:
           - platform: linux
             arch: x86_64
-            runner: forgejo-linux-x86_64
+            runner: x86_64-linux-debian
+            package_ext: tar.gz
+          - platform: linux
+            arch: x86_64
+            runner: x86_64-linux-ubuntu
+            package_ext: tar.gz
+          - platform: linux
+            arch: x86_64
+            runner: x86_64-linux-znver5
             package_ext: tar.gz
           - platform: linux
             arch: aarch64
-            runner: forgejo-linux-aarch64
-            package_ext: tar.gz
-          - platform: macos
-            arch: x86_64
-            runner: forgejo-macos-x86_64
+            runner: aarch64-linux-fedora
             package_ext: tar.gz
           - platform: macos
             arch: aarch64
-            runner: forgejo-macos-aarch64
+            runner: aarch64-macos-m1
             package_ext: tar.gz
           - platform: windows
             arch: x86_64
-            runner: forgejo-windows-x86_64
+            runner: x86_64-windows-znver5
             package_ext: zip
             msvc_arch: x64
             windows_clang_target: x86_64-pc-windows-msvc
-          - platform: windows
-            arch: aarch64
-            runner: forgejo-windows-aarch64
-            package_ext: zip
-            msvc_arch: arm64
-            windows_clang_target: aarch64-pc-windows-msvc
 
     env:
       COMPONENTS: ${{ github.event.inputs.components || 'all' }}
@@ -147,31 +145,31 @@ jobs:
         if: ${{ matrix.platform == 'linux' }}
         run: |
           set -eux
-          if command -v apt-get >/dev/null 2>&1; then
-            sudo_cmd=sudo
-            if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
-              sudo_cmd=
-            fi
-            $sudo_cmd apt-get update
-            $sudo_cmd apt-get install -y --no-install-recommends \
-              binutils \
-              build-essential \
-              ca-certificates \
-              cmake \
-              file \
-              git \
-              libwayland-dev \
-              wayland-protocols \
-              libx11-dev \
-              libx11-xcb-dev \
-              libxext-dev \
-              libxkbcommon-dev \
-              libxcb1-dev \
-              libxrandr-dev \
-              ninja-build \
-              pkg-config \
-              python3
-          fi
+          #if command -v apt-get >/dev/null 2>&1; then
+          #  sudo_cmd=sudo
+          #  if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+          #    sudo_cmd=
+          #  fi
+          #  $sudo_cmd apt-get update
+          #  $sudo_cmd apt-get install -y --no-install-recommends \
+          #    binutils \
+          #    build-essential \
+          #    ca-certificates \
+          #    cmake \
+          #    file \
+          #    git \
+          #    libwayland-dev \
+          #    wayland-protocols \
+          #    libx11-dev \
+          #    libx11-xcb-dev \
+          #    libxext-dev \
+          #    libxkbcommon-dev \
+          #    libxcb1-dev \
+          #    libxrandr-dev \
+          #    ninja-build \
+          #    pkg-config \
+          #    python3
+          #fi
           cmake --version
           git --version
           python3 --version
@@ -214,7 +212,7 @@ jobs:
 
       - name: Import MSVC ABI environment
         if: ${{ matrix.platform == 'windows' }}
-        shell: pwsh
+        shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
           $arch = '${{ matrix.msvc_arch }}'
@@ -286,7 +284,7 @@ jobs:
 
       - name: Package SDK zip
         if: ${{ matrix.package_ext == 'zip' }}
-        shell: pwsh
+        shell: powershell
         run: |
           Push-Location dist
           Compress-Archive -Force `
