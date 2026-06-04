@@ -98,13 +98,11 @@ jobs:
             runner: windows-2022
             package_ext: zip
             msvc_arch: x64
-            windows_clang_target: x86_64-pc-windows-msvc
           - platform: windows
             arch: aarch64
             runner: windows-11-arm
             package_ext: zip
             msvc_arch: arm64
-            windows_clang_target: aarch64-pc-windows-msvc
 
     env:
       COMPONENTS: ${{ github.event.inputs.components || 'all' }}
@@ -127,7 +125,6 @@ jobs:
       SLANG_LLVM_FLAVOR: DISABLE
       SLANG_ENABLE_DXIL: OFF
       PREFER_STATIC_LIBS: ON
-      WINDOWS_CLANG_TARGET: ${{ matrix.windows_clang_target || '' }}
       JOBS: 2
 
     steps:
@@ -178,18 +175,14 @@ jobs:
           fi
           cmake --version
 
-      - name: Check Windows LLVM/Ninja build dependencies
+      - name: Check Windows Ninja build dependency
         if: ${{ matrix.platform == 'windows' }}
         run: |
           set -eux
-          export PATH="/c/Program Files/LLVM/bin:/c/ProgramData/chocolatey/bin:$PATH"
-          command -v clang
-          command -v clang++
-          command -v llvm-rc
+          export PATH="/c/ProgramData/chocolatey/bin:$PATH"
           if ! command -v ninja >/dev/null 2>&1; then
             choco install ninja -y --no-progress
           fi
-          [[ ! -d '/c/Program Files/LLVM/bin' ]] || echo 'C:\Program Files\LLVM\bin' >> "$GITHUB_PATH"
           [[ ! -d '/c/ProgramData/chocolatey/bin' ]] || echo 'C:\ProgramData\chocolatey\bin' >> "$GITHUB_PATH"
 
       - name: Set up MSVC ABI environment
@@ -206,11 +199,14 @@ jobs:
           git --version
           python --version
           ninja --version
-          clang --version
-          clang++ --version
-          clang --target=${{ matrix.windows_clang_target }} -dumpmachine
-          clang++ --target=${{ matrix.windows_clang_target }} -dumpmachine
-          command -v llvm-rc
+          command -v cl.exe
+          command -v link.exe
+          command -v lib.exe
+          command -v dumpbin.exe
+          command -v rc.exe
+          command -v mt.exe
+          cl 2>&1 | head -n 2 || true
+          dumpbin 2>&1 | head -n 2 || true
 
       - name: Build SDK
         run: scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}

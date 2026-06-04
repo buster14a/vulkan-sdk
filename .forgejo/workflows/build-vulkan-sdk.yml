@@ -6,9 +6,9 @@ name: build-vulkan-sdk
 #   forgejo-macos-x86_64, forgejo-macos-aarch64
 #   forgejo-windows-x86_64, forgejo-windows-aarch64
 #
-# Windows runners must have Git Bash, CMake, Python, LLVM clang/clang++/llvm-rc,
-# Ninja, and Visual Studio Build Tools installed. The workflow imports the MSVC
-# developer environment locally; it does not use clang-cl, MinGW, or containers.
+# Windows runners must have Git Bash, CMake, Python, Ninja, and Visual Studio
+# Build Tools installed. The workflow imports the MSVC developer environment
+# locally; it does not use LLVM clang, MinGW, or containers.
 
 on:
   push:
@@ -110,7 +110,6 @@ jobs:
             runner: x86_64-windows-znver5
             package_ext: zip
             msvc_arch: x64
-            windows_clang_target: x86_64-pc-windows-msvc
 
     env:
       COMPONENTS: ${{ github.event.inputs.components || 'all' }}
@@ -133,7 +132,6 @@ jobs:
       SLANG_LLVM_FLAVOR: DISABLE
       SLANG_ENABLE_DXIL: OFF
       PREFER_STATIC_LIBS: ON
-      WINDOWS_CLANG_TARGET: ${{ matrix.windows_clang_target || '' }}
       JOBS: 2
 
     steps:
@@ -190,14 +188,11 @@ jobs:
           cmake --version
           ninja --version
 
-      - name: Check Windows LLVM/Ninja build dependencies
+      - name: Check Windows Ninja build dependency
         if: ${{ matrix.platform == 'windows' }}
         run: |
           set -eux
-          export PATH="/c/Program Files/LLVM/bin:/c/ProgramData/chocolatey/bin:$PATH"
-          command -v clang
-          command -v clang++
-          command -v llvm-rc
+          export PATH="/c/ProgramData/chocolatey/bin:$PATH"
           if ! command -v ninja >/dev/null 2>&1; then
             if command -v choco >/dev/null 2>&1; then
               choco install ninja -y --no-progress
@@ -206,7 +201,6 @@ jobs:
               exit 2
             fi
           fi
-          [[ ! -d '/c/Program Files/LLVM/bin' ]] || echo 'C:\Program Files\LLVM\bin' >> "$GITHUB_PATH"
           [[ ! -d '/c/ProgramData/chocolatey/bin' ]] || echo 'C:\ProgramData\chocolatey\bin' >> "$GITHUB_PATH"
 
       - name: Import MSVC ABI environment
@@ -222,6 +216,10 @@ jobs:
           }
           if (-not $installationPath) {
             $candidates = @(
+              "$env:ProgramFiles\Microsoft Visual Studio\18\Enterprise",
+              "$env:ProgramFiles\Microsoft Visual Studio\18\Professional",
+              "$env:ProgramFiles\Microsoft Visual Studio\18\Community",
+              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\BuildTools",
               "$env:ProgramFiles\Microsoft Visual Studio\2022\Enterprise",
               "$env:ProgramFiles\Microsoft Visual Studio\2022\Professional",
               "$env:ProgramFiles\Microsoft Visual Studio\2022\Community",
@@ -260,11 +258,14 @@ jobs:
           git --version
           python --version
           ninja --version
-          clang --version
-          clang++ --version
-          clang --target=${{ matrix.windows_clang_target }} -dumpmachine
-          clang++ --target=${{ matrix.windows_clang_target }} -dumpmachine
-          command -v llvm-rc
+          command -v cl.exe
+          command -v link.exe
+          command -v lib.exe
+          command -v dumpbin.exe
+          command -v rc.exe
+          command -v mt.exe
+          cl 2>&1 | head -n 2 || true
+          dumpbin 2>&1 | head -n 2 || true
 
       - name: Build SDK
         run: scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}

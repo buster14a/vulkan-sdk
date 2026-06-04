@@ -33,9 +33,8 @@ Environment variables:
   PREFER_STATIC_LIBS     ON/OFF to prefer static component libraries where practical (default: ON)
   KEEP_BUILD_DIRS        ON/OFF to preserve per-component build directories after install (default: OFF)
   PYTHON                 Python interpreter to use for CMake codegen/dependency scripts (default: auto-detect python3/python)
-  WINDOWS_CMAKE_C_COMPILER   Direct Clang C compiler for Windows builds (default: clang)
-  WINDOWS_CMAKE_CXX_COMPILER Direct Clang C++ compiler for Windows builds (default: clang++)
-  WINDOWS_CLANG_TARGET   MSVC ABI Clang target for Windows builds (default: inferred from arch)
+  WINDOWS_CMAKE_C_COMPILER   MSVC C compiler for Windows builds (default: cl)
+  WINDOWS_CMAKE_CXX_COMPILER MSVC C++ compiler for Windows builds (default: cl)
   WORK_DIR               Build/source directory (default: .build)
   DIST_DIR               Output directory (default: dist)
   JOBS                   Parallel build jobs (default: nproc/sysctl/2)
@@ -113,15 +112,13 @@ slang_lib_type=${SLANG_LIB_TYPE:-SHARED}
 enable_wsi=${ENABLE_WSI:-ON}
 prefer_static_libs=${PREFER_STATIC_LIBS:-ON}
 keep_build_dirs=${KEEP_BUILD_DIRS:-OFF}
-windows_c_compiler=${WINDOWS_CMAKE_C_COMPILER:-clang}
-windows_cxx_compiler=${WINDOWS_CMAKE_CXX_COMPILER:-clang++}
-windows_clang_target=${WINDOWS_CLANG_TARGET:-}
-if [[ -z "$windows_clang_target" ]]; then
-  case "$arch" in
-    x86_64) windows_clang_target=x86_64-pc-windows-msvc ;;
-    aarch64) windows_clang_target=aarch64-pc-windows-msvc ;;
-  esac
-fi
+windows_c_compiler=${WINDOWS_CMAKE_C_COMPILER:-cl}
+windows_cxx_compiler=${WINDOWS_CMAKE_CXX_COMPILER:-cl}
+windows_linker=
+windows_lib=
+windows_rc=
+windows_mt=
+windows_dumpbin=
 
 host_arch=$(uname -m)
 case "$host_arch" in
@@ -391,12 +388,25 @@ cmake_build_install() {
   fi
 }
 
+reset_stale_windows_cmake_cache() {
+  local build=$1
+  local cache="$build/CMakeCache.txt"
+  [[ "$platform" == windows && -f "$cache" ]] || return 0
+
+  if grep -Eiq '^CMAKE_(C|CXX)_COMPILER:[^=]*=.*(clang|gcc|g\+\+)' "$cache"; then
+    echo "==> Removing stale non-MSVC Windows CMake build directory: $build"
+    rm -rf "$build"
+  fi
+}
+
 cmake_configure() {
   local source=$1
   local build=$2
   local install_prefix=$3
   local prefix_path=$4
   shift 4
+
+  reset_stale_windows_cmake_cache "$build"
 
   local args=(
     cmake
@@ -419,10 +429,9 @@ cmake_configure() {
     args+=(-DBUILD_SHARED_LIBS=OFF)
   fi
   if [[ "$platform" == windows ]]; then
-    # Direct clang with an MSVC target predefines _WIN32, but not WIN32.  Some
-    # Vulkan SDK components still gate Windows-only code on WIN32.  Keep the
-    # normal Windows macros while also blocking Windows SDK min/max macros and
-    # CRT deprecation warnings from breaking GNU-like clang command-line builds.
+    # Use the MSVC toolchain from a Visual Studio Developer environment.  Slang
+    # also runs dumpbin at build time to generate its proxy DLL exports, so the
+    # MSVC tools must be on PATH before configuration starts.
     local windows_c_flags="${CFLAGS:-}"
     local windows_cxx_flags="${CXXFLAGS:-}"
     local windows_compat_defines="-DWIN32 -D_WINDOWS -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS"
@@ -431,54 +440,88 @@ cmake_configure() {
     args+=(
       -DCMAKE_C_COMPILER="$windows_c_compiler"
       -DCMAKE_CXX_COMPILER="$windows_cxx_compiler"
-      -DCMAKE_C_COMPILER_TARGET="$windows_clang_target"
-      -DCMAKE_CXX_COMPILER_TARGET="$windows_clang_target"
+      -DCMAKE_LINKER="$windows_linker"
+      -DCMAKE_AR="$windows_lib"
+      -DCMAKE_RC_COMPILER="$windows_rc"
+      -DCMAKE_MT="$windows_mt"
       -DCMAKE_C_FLAGS="$windows_c_flags"
       -DCMAKE_CXX_FLAGS="$windows_cxx_flags"
     )
-    if command -v llvm-rc >/dev/null 2>&1; then
-      args+=(-DCMAKE_RC_COMPILER="$(command -v llvm-rc)")
-    fi
-    if command -v llvm-mt >/dev/null 2>&1; then
-      args+=(-DCMAKE_MT="$(command -v llvm-mt)")
-    fi
   fi
 
   args+=("$@")
   "${args[@]}"
 }
 
-require_direct_clang() {
-  local compiler=$1
-  local label=$2
-  local compiler_base
-  compiler_base=$(basename "$compiler" | tr '[:upper:]' '[:lower:]')
-  case "$compiler_base" in
-    clang-cl|clang-cl.exe)
-      echo "$label must be the direct clang driver, not clang-cl: $compiler" >&2
-      exit 2
-      ;;
-  esac
-  if ! command -v "$compiler" >/dev/null 2>&1; then
-    echo "$label not found on PATH: $compiler" >&2
-    exit 2
+cmake_path_from_shell() {
+  local path=$1
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$path"
+  else
+    printf '%s\n' "$path"
   fi
 }
 
-require_windows_msvc_clang() {
+find_windows_exe() {
+  local name=$1
+  local label=$2
+  local exe_name=$name
+  case "$exe_name" in
+    *.exe|*.EXE) ;;
+    *) exe_name="$exe_name.exe" ;;
+  esac
+
+  if [[ "$exe_name" == *[\\/:]* ]]; then
+    local candidate=$exe_name
+    if command -v cygpath >/dev/null 2>&1; then
+      candidate=$(cygpath -u "$exe_name" 2>/dev/null || printf '%s\n' "$exe_name")
+    fi
+    if [[ ! -x "$candidate" ]]; then
+      echo "$label is not executable: $exe_name" >&2
+      exit 2
+    fi
+    cmake_path_from_shell "$candidate"
+    return
+  fi
+
+  local resolved
+  resolved=$(command -v "$exe_name" 2>/dev/null || true)
+  if [[ -z "$resolved" ]]; then
+    echo "$label not found on PATH: $exe_name. Run from a Visual Studio Developer environment or import VsDevCmd before building Windows SDK artifacts." >&2
+    exit 2
+  fi
+  cmake_path_from_shell "$resolved"
+}
+
+require_msvc_cl() {
   local compiler=$1
   local label=$2
-  local target
-  target=$("$compiler" --target="$windows_clang_target" -dumpmachine 2>/dev/null || "$compiler" --target="$windows_clang_target" --print-target-triple 2>/dev/null || true)
-  case "$target" in
-    *windows-msvc*) ;;
-    *windows-gnu*|*w64-windows-gnu*)
-      echo "$label targets GNU/MinGW ($target). Use direct Clang with the MSVC ABI target, not the GNU Windows target." >&2
-      exit 2
+  local base
+  base=$(basename "$compiler" | tr '[:upper:]' '[:lower:]')
+  if [[ "$base" != cl.exe && "$base" != cl ]]; then
+    echo "$label must be MSVC cl.exe for Windows builds, got: $compiler" >&2
+    exit 2
+  fi
+
+  local banner
+  banner=$("$compiler" 2>&1 || true)
+  if ! grep -qi 'Microsoft.*C/C++.*Compiler' <<< "$banner"; then
+    echo "$label resolved to cl.exe but does not look like the Microsoft C/C++ compiler: $compiler" >&2
+    exit 2
+  fi
+
+  case "$arch" in
+    x86_64)
+      if ! grep -qi 'for x64' <<< "$banner"; then
+        echo "$label is MSVC cl.exe, but it does not appear to target x64 for windows-$arch: $compiler" >&2
+        exit 2
+      fi
       ;;
-    *)
-      echo "$label must target the Windows MSVC ABI for this Windows build, got: ${target:-unknown}" >&2
-      exit 2
+    aarch64)
+      if ! grep -qi 'for ARM64' <<< "$banner"; then
+        echo "$label is MSVC cl.exe, but it does not appear to target ARM64 for windows-$arch: $compiler" >&2
+        exit 2
+      fi
       ;;
   esac
 }
@@ -511,15 +554,25 @@ check_native_platform() {
       MINGW*|MSYS*|CYGWIN*) ;;
       *) echo "Cannot build windows-$arch on non-Windows host $host_os." >&2; exit 2 ;;
     esac
-    require_direct_clang "$windows_c_compiler" WINDOWS_CMAKE_C_COMPILER
-    require_direct_clang "$windows_cxx_compiler" WINDOWS_CMAKE_CXX_COMPILER
-    require_windows_msvc_clang "$windows_c_compiler" WINDOWS_CMAKE_C_COMPILER
-    require_windows_msvc_clang "$windows_cxx_compiler" WINDOWS_CMAKE_CXX_COMPILER
-    if ! command -v llvm-rc >/dev/null 2>&1; then
-      echo "llvm-rc is required for Windows resource compilation when building with direct clang." >&2
-      exit 2
-    fi
-    echo "==> Native Windows build requested for $arch using $windows_c_compiler/$windows_cxx_compiler --target=$windows_clang_target"
+    case "${VSCMD_ARG_TGT_ARCH:-}" in
+      "") ;;
+      x64) [[ "$arch" == x86_64 ]] || { echo "MSVC environment targets x64, but requested windows-$arch." >&2; exit 2; } ;;
+      arm64) [[ "$arch" == aarch64 ]] || { echo "MSVC environment targets arm64, but requested windows-$arch." >&2; exit 2; } ;;
+      *) echo "Unsupported MSVC target architecture from VSCMD_ARG_TGT_ARCH=${VSCMD_ARG_TGT_ARCH:-}." >&2; exit 2 ;;
+    esac
+
+    windows_c_compiler=$(find_windows_exe "$windows_c_compiler" WINDOWS_CMAKE_C_COMPILER)
+    windows_cxx_compiler=$(find_windows_exe "$windows_cxx_compiler" WINDOWS_CMAKE_CXX_COMPILER)
+    windows_linker=$(find_windows_exe link WINDOWS_LINKER)
+    windows_lib=$(find_windows_exe lib WINDOWS_LIB)
+    windows_rc=$(find_windows_exe rc WINDOWS_RC)
+    windows_mt=$(find_windows_exe mt WINDOWS_MT)
+    windows_dumpbin=$(find_windows_exe dumpbin WINDOWS_DUMPBIN)
+
+    require_msvc_cl "$windows_c_compiler" WINDOWS_CMAKE_C_COMPILER
+    require_msvc_cl "$windows_cxx_compiler" WINDOWS_CMAKE_CXX_COMPILER
+    echo "==> Native Windows build requested for $arch using MSVC: $windows_c_compiler"
+    echo "==> Found MSVC linker/tools: $windows_linker; $windows_lib; $windows_rc; $windows_mt; $windows_dumpbin"
   fi
 }
 
@@ -624,103 +677,6 @@ build_shaderc() {
     -DSHADERC_ENABLE_WERROR_COMPILE=OFF
 }
 
-patch_extension_layer_for_windows_clang() {
-  if [[ "$platform" != windows ]]; then
-    return 0
-  fi
-
-  local cmake_file="$src_dir/Vulkan-ExtensionLayer/layers/CMakeLists.txt"
-  "$python_cmd" - "$cmake_file" <<'PY'
-from pathlib import Path
-import sys
-
-cmake_file = Path(sys.argv[1])
-text = cmake_file.read_text()
-old = """    if(MSVC)
-        target_link_options(${extension_layer} PRIVATE /DEF:${CMAKE_CURRENT_SOURCE_DIR}/${extension_layer}.def)
-        target_compile_definitions(${extension_layer} PUBLIC NOMINMAX)
-    elseif(MINGW)
-        target_sources(${extension_layer} PRIVATE ${extension_layer}.def)
-    elseif(APPLE)
-"""
-new = """    if(MSVC)
-        target_link_options(${extension_layer} PRIVATE /DEF:${CMAKE_CURRENT_SOURCE_DIR}/${extension_layer}.def)
-        target_compile_definitions(${extension_layer} PUBLIC NOMINMAX)
-    elseif(MINGW)
-        target_sources(${extension_layer} PRIVATE ${extension_layer}.def)
-    elseif(WIN32)
-        target_link_options(${extension_layer} PRIVATE LINKER:/DEF:${CMAKE_CURRENT_SOURCE_DIR}/${extension_layer}.def)
-        target_compile_definitions(${extension_layer} PUBLIC NOMINMAX)
-    elseif(APPLE)
-"""
-if new in text:
-    sys.exit(0)
-if old not in text:
-    raise SystemExit(f"Could not patch Windows direct-Clang link options in {cmake_file}")
-cmake_file.write_text(text.replace(old, new, 1))
-PY
-}
-
-patch_validation_layers_for_windows_clang() {
-  if [[ "$platform" != windows ]]; then
-    return 0
-  fi
-
-  if [[ "$arch" == aarch64 ]]; then
-    # ValidationLayers' Windows dependency updater builds mimalloc by default.
-    # mimalloc 3.3.2 currently fails with direct Clang/MSVC-ABI ARM64 builds due
-    # to undeclared MSVC ARM64 acquire/release intrinsics (__ldar64/__stlr64).
-    # mimalloc is an optional performance allocator for VVL, so skip it only for
-    # Windows ARM64 and let VVL fall back to the CRT allocator.
-    local known_good="$src_dir/Vulkan-ValidationLayers/scripts/known_good.json"
-    "$python_cmd" - "$known_good" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-known_good = Path(sys.argv[1])
-data = json.loads(known_good.read_text())
-for repo in data.get("repos", []):
-    if repo.get("name") == "mimalloc":
-        repo["build_architectures"] = ["64", "x64", "win64"]
-        break
-else:
-    raise SystemExit(f"Could not find mimalloc entry in {known_good}")
-known_good.write_text(json.dumps(data, indent=4) + "\n")
-PY
-  fi
-}
-
-patch_vulkan_profiles_for_windows_clang() {
-  if [[ "$platform" != windows ]]; then
-    return 0
-  fi
-
-  local cmake_file="$src_dir/Vulkan-Profiles/layer/CMakeLists.txt"
-  "$python_cmd" - "$cmake_file" <<'PY'
-from pathlib import Path
-import sys
-
-cmake_file = Path(sys.argv[1])
-text = cmake_file.read_text()
-old = """elseif(MINGW)
-    target_sources(ProfilesLayer PRIVATE ${LAYER_NAME}.def)
-elseif(APPLE)
-"""
-new = """elseif(MINGW)
-    target_sources(ProfilesLayer PRIVATE ${LAYER_NAME}.def)
-elseif(WIN32)
-    message(DEBUG "Functions are exported via ${LAYER_NAME}.def")
-elseif(APPLE)
-"""
-if new in text:
-    sys.exit(0)
-if old not in text:
-    raise SystemExit(f"Could not patch Windows direct-Clang link options in {cmake_file}")
-cmake_file.write_text(text.replace(old, new, 1))
-PY
-}
-
 build_vulkan_tools() {
   cmake_install Vulkan-Tools "$src_dir/Vulkan-Tools" "$build_dir/vulkan-tools-$platform-$arch" \
     -DUPDATE_DEPS=ON \
@@ -731,8 +687,6 @@ build_vulkan_tools() {
 }
 
 build_validation_layers() {
-  patch_validation_layers_for_windows_clang
-
   local extra=(
     -DUPDATE_DEPS=ON
     -DBUILD_TESTS=OFF
@@ -750,11 +704,6 @@ build_validation_layers() {
 }
 
 build_extension_layer() {
-  # Vulkan-ExtensionLayer 1.4.350 treats GNU-style clang as non-MSVC even when
-  # targeting the Windows MSVC ABI, which otherwise feeds ELF options such as
-  # --version-script and -Bsymbolic to lld-link/link.exe.
-  patch_extension_layer_for_windows_clang
-
   cmake_install Vulkan-ExtensionLayer "$src_dir/Vulkan-ExtensionLayer" "$build_dir/extension-layer-$platform-$arch" \
     -DUPDATE_DEPS=ON \
     -DBUILD_TESTS=OFF \
@@ -763,11 +712,6 @@ build_extension_layer() {
 }
 
 build_vulkan_profiles() {
-  # Vulkan-Profiles 1.4.350 also keys Windows linker handling off MSVC.  With
-  # direct clang targeting the MSVC ABI, WIN32 is true but MSVC is false, so
-  # avoid the Unix/ELF version-script/-Bsymbolic fallback on Windows.
-  patch_vulkan_profiles_for_windows_clang
-
   cmake_install Vulkan-Profiles "$src_dir/Vulkan-Profiles" "$build_dir/profiles-$platform-$arch" \
     -DUPDATE_DEPS=ON \
     -DBUILD_TESTS=OFF \
