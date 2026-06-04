@@ -230,13 +230,13 @@ jobs:
 
       - name: Package SDK zip
         if: ${{ matrix.package_ext == 'zip' }}
-        shell: pwsh
         run: |
-          Push-Location dist
-          Compress-Archive -Force `
-            -Path 'custom-vulkan-sdk/${{ matrix.platform }}-${{ matrix.arch }}','custom-vulkan-sdk/setup-env.sh','custom-vulkan-sdk/setup-env.ps1' `
-            -DestinationPath '../custom-vulkan-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip'
-          Pop-Location
+          set -eux
+          python scripts/package-sdk-zip.py \
+            dist/custom-vulkan-sdk \
+            ${{ matrix.platform }} \
+            ${{ matrix.arch }} \
+            custom-vulkan-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip
 
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v4
