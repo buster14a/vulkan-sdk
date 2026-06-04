@@ -195,6 +195,7 @@ jobs:
         if: ${{ matrix.platform == 'windows' }}
         run: |
           set -eux
+          [[ ! -f .build/msvc-env.sh ]] || source .build/msvc-env.sh
           cmake --version
           git --version
           python --version
@@ -209,7 +210,12 @@ jobs:
           dumpbin 2>&1 | head -n 2 || true
 
       - name: Build SDK
-        run: scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}
+        run: |
+          set -eux
+          if [[ '${{ matrix.platform }}' == windows && -f .build/msvc-env.sh ]]; then
+            source .build/msvc-env.sh
+          fi
+          scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Verify SDK
         run: scripts/verify-sdk.sh dist/custom-vulkan-sdk ${{ matrix.platform }} ${{ matrix.arch }}

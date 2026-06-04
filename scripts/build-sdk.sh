@@ -719,38 +719,41 @@ build_vulkan_profiles() {
 }
 
 build_slang_component() {
+  local slang_build="$build_dir/slang-$platform-$arch"
   local extra=(
     -DSLANG_USE_SYSTEM_VULKAN_HEADERS=OFF
     -DSLANG_USE_SYSTEM_GLSLANG=OFF
+    -DSLANG_USE_SYSTEM_SPIRV_TOOLS=OFF
   )
 
-  # On Linux, reuse SDK SPIR-V components that were already built instead of
-  # compiling Slang's bundled copies. This keeps full SDK builds within the disk
-  # budget on smaller self-hosted runners. Keep Windows on Slang's bundled
-  # deps: CMake package discovery from MSYS paths is less reliable there, and
-  # Vulkan-Headers may not be found even when the SDK prefix was installed.
+  # Reuse Linux SPIR-V headers only. Reusing an installed SPIRV-Tools package
+  # makes Slang's optional slang-glslang module emit bare -lSPIRV-Tools-* linker
+  # flags on some runners, which can fail without matching -L search paths.
+  # Slang's standalone glslang wrapper is disabled below; this SDK already ships
+  # glslangValidator separately.
   if [[ "$platform" == linux ]]; then
     if has_component spirv-headers; then
       extra+=(-DSLANG_USE_SYSTEM_SPIRV_HEADERS=ON)
     else
       extra+=(-DSLANG_USE_SYSTEM_SPIRV_HEADERS=OFF)
     fi
-    if has_component spirv-tools; then
-      extra+=(-DSLANG_USE_SYSTEM_SPIRV_TOOLS=ON)
-    else
-      extra+=(-DSLANG_USE_SYSTEM_SPIRV_TOOLS=OFF)
-    fi
   else
     extra+=(
       -DSLANG_USE_SYSTEM_SPIRV_HEADERS=OFF
-      -DSLANG_USE_SYSTEM_SPIRV_TOOLS=OFF
     )
   fi
-  cmake_install Slang "$src_dir/slang" "$build_dir/slang-$platform-$arch" \
+
+  if [[ -f "$slang_build/CMakeCache.txt" ]] && grep -Eq '^(SLANG_ENABLE_SLANG_GLSLANG|SLANG_USE_SYSTEM_SPIRV_TOOLS):[^=]*=ON' "$slang_build/CMakeCache.txt"; then
+    echo "==> Removing stale Slang CMake build directory with incompatible dependency settings: $slang_build"
+    rm -rf "$slang_build"
+  fi
+
+  cmake_install Slang "$src_dir/slang" "$slang_build" \
     -DSLANG_ENABLE_SLANGC=ON \
     -DSLANG_ENABLE_SLANGD=ON \
     -DSLANG_ENABLE_SLANGI=ON \
     -DSLANG_ENABLE_SLANGRT=ON \
+    -DSLANG_ENABLE_SLANG_GLSLANG=OFF \
     -DSLANG_ENABLE_TESTS=OFF \
     -DSLANG_ENABLE_EXAMPLES=OFF \
     -DSLANG_ENABLE_GFX=OFF \

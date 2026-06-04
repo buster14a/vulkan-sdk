@@ -236,24 +236,53 @@ jobs:
           }
 
           $envLines = cmd.exe /s /c "`"$vsdev`" -arch=$arch -host_arch=$arch >nul && set"
+          $bashEnv = Join-Path (Get-Location) '.build/msvc-env.sh'
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bashEnv) | Out-Null
+          $pathEntries = @()
+          $envVars = @{}
           foreach ($line in $envLines) {
             if ($line -match '^([^=]+)=(.*)$') {
               $name = $matches[1]
               $value = $matches[2]
               if ($name -ieq 'Path') {
                 foreach ($entry in ($value -split ';')) {
-                  if ($entry) { $entry | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8 }
+                  if ($entry) {
+                    $pathEntries += $entry
+                    $entry | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+                  }
                 }
               } elseif ($name -match '^(INCLUDE|LIB|LIBPATH|WindowsSdkDir|WindowsSDKVersion|VCToolsInstallDir|VCINSTALLDIR|VSINSTALLDIR|UniversalCRTSdkDir|UCRTVersion|VSCMD_ARG_TGT_ARCH|VSCMD_VER)$') {
+                $envVars[$name] = $value
                 "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
               }
             }
           }
 
+          function Convert-BashPath([string]$Path) {
+            $normalized = $Path -replace '\\', '/'
+            if ($normalized -match '^([A-Za-z]):/(.*)$') {
+              return '/' + $matches[1].ToLowerInvariant() + '/' + $matches[2]
+            }
+            return $normalized
+          }
+          function Quote-Sh([string]$Value) {
+            return "'" + ($Value -replace "'", "'\''") + "'"
+          }
+          $bashPath = ($pathEntries | Where-Object { $_ } | ForEach-Object { Convert-BashPath $_ }) -join ':'
+          $bashLines = @()
+          if ($bashPath) {
+            $bashLines += 'export PATH=' + (Quote-Sh $bashPath) + ':"$PATH"'
+          }
+          foreach ($entry in $envVars.GetEnumerator()) {
+            $bashLines += 'export ' + $entry.Key + '=' + (Quote-Sh $entry.Value)
+          }
+          Set-Content -Path $bashEnv -Value $bashLines -Encoding ascii
+
       - name: Check Windows build dependencies
         if: ${{ matrix.platform == 'windows' }}
         run: |
           set -eux
+          [[ ! -f .build/msvc-env.sh ]] || source .build/msvc-env.sh
           cmake --version
           git --version
           python --version
@@ -268,7 +297,12 @@ jobs:
           dumpbin 2>&1 | head -n 2 || true
 
       - name: Build SDK
-        run: scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}
+        run: |
+          set -eux
+          if [[ '${{ matrix.platform }}' == windows && -f .build/msvc-env.sh ]]; then
+            source .build/msvc-env.sh
+          fi
+          scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Verify SDK
         run: scripts/verify-sdk.sh dist/custom-vulkan-sdk ${{ matrix.platform }} ${{ matrix.arch }}
