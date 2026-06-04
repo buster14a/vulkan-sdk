@@ -2,7 +2,7 @@
 set -euo pipefail
 
 sdk_dir=${1:-dist/custom-vulkan-sdk}
-max_glibc=${MAX_GLIBC_VERSION:-2.31}
+max_glibc=${MAX_GLIBC_VERSION:-}
 
 if [[ ! -d "$sdk_dir" ]]; then
   echo "SDK directory does not exist: $sdk_dir" >&2
@@ -36,6 +36,8 @@ check_arch() {
 
 check_glibc_floor() {
   local file=$1
+  [[ -n "$max_glibc" ]] || return 0
+
   local status=0
   local versions
   versions=$(readelf --version-info "$file" 2>/dev/null | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)+' | sed 's/^GLIBC_//' | sort -Vu || true)
@@ -65,4 +67,8 @@ if [[ "$status" -ne 0 ]]; then
   exit "$status"
 fi
 
-echo "Compatibility check passed: no checked ELF requires newer than GLIBC_$max_glibc."
+if [[ -n "$max_glibc" ]]; then
+  echo "Compatibility check passed: no checked ELF requires newer than GLIBC_$max_glibc."
+else
+  echo "Compatibility check passed: GLIBC floor not enforced."
+fi

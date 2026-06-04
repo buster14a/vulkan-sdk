@@ -28,8 +28,10 @@ Environment variables:
   BUILD_SLANG            ON/OFF compatibility switch (default: ON)
   SLANG_LLVM_FLAVOR      Slang LLVM mode; DISABLE avoids extra binary downloads (default: DISABLE)
   SLANG_ENABLE_DXIL      ON/OFF for Slang DXIL support (default: OFF)
+  SLANG_LIB_TYPE         Slang compiler library type: SHARED or STATIC (default: SHARED)
   ENABLE_WSI             Linux only: ON/OFF for XCB, Xlib, Xrandr and Wayland support (default: ON)
   PREFER_STATIC_LIBS     ON/OFF to prefer static component libraries where practical (default: ON)
+  KEEP_BUILD_DIRS        ON/OFF to preserve per-component build directories after install (default: OFF)
   PYTHON                 Python interpreter to use for CMake codegen/dependency scripts (default: auto-detect python3/python)
   WINDOWS_CMAKE_C_COMPILER   Direct Clang C compiler for Windows builds (default: clang)
   WINDOWS_CMAKE_CXX_COMPILER Direct Clang C++ compiler for Windows builds (default: clang++)
@@ -107,8 +109,10 @@ slang_ref=${SLANG_REF:-$default_vulkan_sdk_ref}
 build_slang=${BUILD_SLANG:-ON}
 slang_llvm_flavor=${SLANG_LLVM_FLAVOR:-DISABLE}
 slang_enable_dxil=${SLANG_ENABLE_DXIL:-OFF}
+slang_lib_type=${SLANG_LIB_TYPE:-SHARED}
 enable_wsi=${ENABLE_WSI:-ON}
 prefer_static_libs=${PREFER_STATIC_LIBS:-ON}
+keep_build_dirs=${KEEP_BUILD_DIRS:-OFF}
 windows_c_compiler=${WINDOWS_CMAKE_C_COMPILER:-clang}
 windows_cxx_compiler=${WINDOWS_CMAKE_CXX_COMPILER:-clang++}
 windows_clang_target=${WINDOWS_CLANG_TARGET:-}
@@ -179,10 +183,21 @@ normalize_bool() {
   esac
 }
 
+normalize_slang_lib_type() {
+  local value=$1
+  case "$value" in
+    SHARED|shared|Shared) echo SHARED ;;
+    STATIC|static|Static) echo STATIC ;;
+    *) echo "SLANG_LIB_TYPE must be SHARED or STATIC, got: $value" >&2; return 2 ;;
+  esac
+}
+
 enable_wsi=$(normalize_bool ENABLE_WSI "$enable_wsi")
 build_slang=$(normalize_bool BUILD_SLANG "$build_slang")
 slang_enable_dxil=$(normalize_bool SLANG_ENABLE_DXIL "$slang_enable_dxil")
+slang_lib_type=$(normalize_slang_lib_type "$slang_lib_type")
 prefer_static_libs=$(normalize_bool PREFER_STATIC_LIBS "$prefer_static_libs")
+keep_build_dirs=$(normalize_bool KEEP_BUILD_DIRS "$keep_build_dirs")
 
 full_components="vulkan-headers,vulkan-loader,vulkan-utility-libraries,spirv-headers,spirv-tools,glslang,spirv-cross,shaderc,vulkan-tools,vulkan-validationlayers,vulkan-extensionlayer,vulkan-profiles,slang"
 minimal_components="vulkan-headers,vulkan-loader,slang"
@@ -299,8 +314,10 @@ write_component_manifest() {
 | BUILD_SLANG | $build_slang |
 | SLANG_LLVM_FLAVOR | $slang_llvm_flavor |
 | SLANG_ENABLE_DXIL | $slang_enable_dxil |
+| SLANG_LIB_TYPE | $slang_lib_type |
 | ENABLE_WSI | $enable_wsi |
 | PREFER_STATIC_LIBS | $prefer_static_libs |
+| KEEP_BUILD_DIRS | $keep_build_dirs |
 
 This package does not include a GPU driver/ICD.
 EOF
@@ -369,6 +386,9 @@ cmake_configure_type_args=(-DCMAKE_BUILD_TYPE=Release)
 cmake_build_install() {
   local build=$1
   cmake --build "$build" --target install --parallel "$jobs"
+  if [[ "$keep_build_dirs" == OFF ]]; then
+    rm -rf "$build"
+  fi
 }
 
 cmake_configure() {
@@ -387,6 +407,10 @@ cmake_configure() {
     -DCMAKE_INSTALL_PREFIX="$install_prefix"
     -DPython3_EXECUTABLE="$python_cmd"
   )
+
+  if [[ "$platform" != windows ]]; then
+    args+=(-DCMAKE_POSITION_INDEPENDENT_CODE=ON)
+  fi
 
   if [[ -n "$prefix_path" ]]; then
     args+=(-DCMAKE_PREFIX_PATH="$prefix_path")
@@ -751,11 +775,20 @@ build_vulkan_profiles() {
 }
 
 build_slang_component() {
-  local slang_lib_type=SHARED
-  if [[ "$prefer_static_libs" == ON ]]; then
-    slang_lib_type=STATIC
-  fi
+  local extra=()
 
+  # Reuse SDK components that were already built instead of compiling Slang's
+  # bundled copies. This keeps full SDK builds within the disk budget on
+  # smaller self-hosted runners and avoids duplicate SPIR-V artifacts.
+  if has_component vulkan-headers; then
+    extra+=(-DSLANG_USE_SYSTEM_VULKAN_HEADERS=ON)
+  fi
+  if has_component spirv-headers; then
+    extra+=(-DSLANG_USE_SYSTEM_SPIRV_HEADERS=ON)
+  fi
+  if has_component spirv-tools; then
+    extra+=(-DSLANG_USE_SYSTEM_SPIRV_TOOLS=ON)
+  fi
   cmake_install Slang "$src_dir/slang" "$build_dir/slang-$platform-$arch" \
     -DSLANG_ENABLE_SLANGC=ON \
     -DSLANG_ENABLE_SLANGD=ON \
@@ -770,8 +803,11 @@ build_slang_component() {
     -DSLANG_EXCLUDE_TINT=ON \
     -DSLANG_ENABLE_DXIL="$slang_enable_dxil" \
     -DSLANG_SLANG_LLVM_FLAVOR="$slang_llvm_flavor" \
+    -DSLANG_ENABLE_PCH=OFF \
+    -DSLANG_ENABLE_RELEASE_DEBUG_INFO=OFF \
     -DSLANG_ENABLE_RELEASE_LTO=OFF \
-    -DSLANG_LIB_TYPE="$slang_lib_type"
+    -DSLANG_LIB_TYPE="$slang_lib_type" \
+    "${extra[@]}"
 }
 
 check_native_platform
