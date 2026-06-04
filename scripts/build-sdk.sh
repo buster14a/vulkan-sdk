@@ -687,8 +687,12 @@ build_vulkan_tools() {
 }
 
 build_validation_layers() {
+  # This SDK build installs VVL's dependencies as first-class components above.
+  # Keep VVL's update_deps.py disabled so Windows builds do not rebuild nested
+  # SPIRV-Tools trees under the long checkout path, which can exceed MSVC's path
+  # limits while compiling SPIRV-Tools-reduce sources.
   local extra=(
-    -DUPDATE_DEPS=ON
+    -DUPDATE_DEPS=OFF
     -DBUILD_TESTS=OFF
     -DVULKAN_HEADERS_INSTALL_DIR="$common_prefix"
     -DVULKAN_UTILITY_LIBRARIES_INSTALL_DIR="$arch_prefix"
