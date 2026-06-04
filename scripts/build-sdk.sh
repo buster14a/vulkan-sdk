@@ -436,7 +436,7 @@ cmake_configure() {
     local windows_cxx_flags="${CXXFLAGS:-}"
     local windows_compat_defines="-DWIN32 -D_WINDOWS -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS"
     windows_c_flags="${windows_c_flags:+$windows_c_flags }$windows_compat_defines"
-    windows_cxx_flags="${windows_cxx_flags:+$windows_cxx_flags }$windows_compat_defines"
+    windows_cxx_flags="${windows_cxx_flags:+$windows_cxx_flags }$windows_compat_defines /EHsc"
     args+=(
       -DCMAKE_C_COMPILER="$windows_c_compiler"
       -DCMAKE_CXX_COMPILER="$windows_cxx_compiler"
@@ -444,6 +444,7 @@ cmake_configure() {
       -DCMAKE_AR="$windows_lib"
       -DCMAKE_RC_COMPILER="$windows_rc"
       -DCMAKE_MT="$windows_mt"
+      -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
       -DCMAKE_C_FLAGS="$windows_c_flags"
       -DCMAKE_CXX_FLAGS="$windows_cxx_flags"
     )
