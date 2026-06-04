@@ -36,6 +36,18 @@ normalize_bool() {
 }
 build_slang=$(normalize_bool BUILD_SLANG "$build_slang")
 
+unix_find() {
+  local candidate
+  for candidate in /usr/bin/find /bin/find; do
+    if [[ -x "$candidate" ]]; then
+      "$candidate" "$@"
+      return
+    fi
+  done
+
+  command find "$@"
+}
+
 full_components="vulkan-headers,vulkan-loader,vulkan-utility-libraries,spirv-headers,spirv-tools,glslang,spirv-cross,shaderc,vulkan-tools,vulkan-validationlayers,vulkan-extensionlayer,vulkan-profiles,slang"
 minimal_components="vulkan-headers,vulkan-loader,slang"
 components=${COMPONENTS:-all}
@@ -89,7 +101,7 @@ require_exe() {
 require_match() {
   local description=$1
   shift
-  if ! find "$prefix" "$@" | grep -q .; then
+  if ! unix_find "$prefix" "$@" | grep -q .; then
     echo "Missing expected $description" >&2
     exit 1
   fi
@@ -138,7 +150,7 @@ if has_component vulkan-loader; then
       esac
       while IFS= read -r -d '' elf; do
         check_glibc_floor "$elf"
-      done < <(find "$prefix" -type f \( -name '*.so' -o -name '*.so.*' \) -print0)
+      done < <(unix_find "$prefix" -type f \( -name '*.so' -o -name '*.so.*' \) -print0)
       ;;
     macos)
       require_file "$prefix/lib/libvulkan.dylib"

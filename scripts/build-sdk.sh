@@ -170,6 +170,18 @@ PY
 
 python_cmd=$(find_python)
 
+unix_find() {
+  local candidate
+  for candidate in /usr/bin/find /bin/find; do
+    if [[ -x "$candidate" ]]; then
+      "$candidate" "$@"
+      return
+    fi
+  done
+
+  command find "$@"
+}
+
 normalize_bool() {
   local name=$1
   local value=$2
@@ -831,4 +843,4 @@ has_component slang && build_slang_component
 write_component_manifest
 
 echo "==> Installed $platform-$arch files under $arch_prefix"
-find "$arch_prefix" -maxdepth 3 -type f | sort
+unix_find "$arch_prefix" -maxdepth 3 -type f | sort

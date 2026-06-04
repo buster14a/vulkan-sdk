@@ -20,6 +20,18 @@ version_gt() {
   [[ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n1)" == "$a" && "$a" != "$b" ]]
 }
 
+unix_find() {
+  local candidate
+  for candidate in /usr/bin/find /bin/find; do
+    if [[ -x "$candidate" ]]; then
+      "$candidate" "$@"
+      return
+    fi
+  done
+
+  command find "$@"
+}
+
 check_arch() {
   local path=$1
   local expected=$2
@@ -61,7 +73,7 @@ while IFS= read -r -d '' elf; do
   echo "==> Dynamic dependencies for $elf"
   readelf -d "$elf" | grep '(NEEDED)' || true
   check_glibc_floor "$elf" || status=1
-done < <(find "$sdk_dir" -type f \( -name '*.so' -o -name '*.so.*' \) -print0)
+done < <(unix_find "$sdk_dir" -type f \( -name '*.so' -o -name '*.so.*' \) -print0)
 
 if [[ "$status" -ne 0 ]]; then
   exit "$status"
