@@ -775,19 +775,32 @@ build_vulkan_profiles() {
 }
 
 build_slang_component() {
-  local extra=()
+  local extra=(
+    -DSLANG_USE_SYSTEM_VULKAN_HEADERS=OFF
+    -DSLANG_USE_SYSTEM_GLSLANG=OFF
+  )
 
-  # Reuse SDK components that were already built instead of compiling Slang's
-  # bundled copies. This keeps full SDK builds within the disk budget on
-  # smaller self-hosted runners and avoids duplicate SPIR-V artifacts.
-  if has_component vulkan-headers; then
-    extra+=(-DSLANG_USE_SYSTEM_VULKAN_HEADERS=ON)
-  fi
-  if has_component spirv-headers; then
-    extra+=(-DSLANG_USE_SYSTEM_SPIRV_HEADERS=ON)
-  fi
-  if has_component spirv-tools; then
-    extra+=(-DSLANG_USE_SYSTEM_SPIRV_TOOLS=ON)
+  # On Linux, reuse SDK SPIR-V components that were already built instead of
+  # compiling Slang's bundled copies. This keeps full SDK builds within the disk
+  # budget on smaller self-hosted runners. Keep Windows on Slang's bundled
+  # deps: CMake package discovery from MSYS paths is less reliable there, and
+  # Vulkan-Headers may not be found even when the SDK prefix was installed.
+  if [[ "$platform" == linux ]]; then
+    if has_component spirv-headers; then
+      extra+=(-DSLANG_USE_SYSTEM_SPIRV_HEADERS=ON)
+    else
+      extra+=(-DSLANG_USE_SYSTEM_SPIRV_HEADERS=OFF)
+    fi
+    if has_component spirv-tools; then
+      extra+=(-DSLANG_USE_SYSTEM_SPIRV_TOOLS=ON)
+    else
+      extra+=(-DSLANG_USE_SYSTEM_SPIRV_TOOLS=OFF)
+    fi
+  else
+    extra+=(
+      -DSLANG_USE_SYSTEM_SPIRV_HEADERS=OFF
+      -DSLANG_USE_SYSTEM_SPIRV_TOOLS=OFF
+    )
   fi
   cmake_install Slang "$src_dir/slang" "$build_dir/slang-$platform-$arch" \
     -DSLANG_ENABLE_SLANGC=ON \
