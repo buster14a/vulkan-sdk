@@ -728,10 +728,29 @@ build_extension_layer() {
 }
 
 build_vulkan_profiles() {
-  cmake_install Vulkan-Profiles "$src_dir/Vulkan-Profiles" "$build_dir/profiles-$platform-$arch" \
-    -DUPDATE_DEPS=ON \
-    -DBUILD_TESTS=OFF \
+  local profiles_build="$build_dir/profiles-$platform-$arch"
+  local extra=(
+    -DUPDATE_DEPS=ON
+    -DBUILD_TESTS=OFF
     -DVULKAN_HEADERS_INSTALL_DIR="$common_prefix"
+  )
+
+  if [[ "$platform" == windows ]]; then
+    # Vulkan-Profiles still needs update_deps.py for jsoncpp/valijson. Those
+    # nested dependency builds use MSVC's dynamic runtime, so build the profiles
+    # layer with /MD as well to avoid LNK2038 CRT mismatches.
+    if [[ -f "$profiles_build/CMakeCache.txt" ]] && ! grep -Eq '^CMAKE_MSVC_RUNTIME_LIBRARY:[^=]*=MultiThreadedDLL$' "$profiles_build/CMakeCache.txt"; then
+      echo "==> Removing stale Vulkan-Profiles CMake build directory without dynamic MSVC runtime: $profiles_build"
+      rm -rf "$profiles_build"
+    fi
+    extra+=(
+      -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+      -DCMAKE_C_FLAGS="-MD -DWIN32 -D_WINDOWS -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS"
+      -DCMAKE_CXX_FLAGS="-MD -EHsc -DWIN32 -D_WINDOWS -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS"
+    )
+  fi
+
+  cmake_install Vulkan-Profiles "$src_dir/Vulkan-Profiles" "$profiles_build" "${extra[@]}"
 }
 
 build_slang_component() {
