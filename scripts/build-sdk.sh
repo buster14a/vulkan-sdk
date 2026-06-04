@@ -396,8 +396,8 @@ reset_stale_windows_cmake_cache() {
   if grep -Eiq '^CMAKE_(C|CXX)_COMPILER:[^=]*=.*(clang|gcc|g\+\+)' "$cache"; then
     echo "==> Removing stale non-MSVC Windows CMake build directory: $build"
     rm -rf "$build"
-  elif ! grep -Eq '^CMAKE_MSVC_RUNTIME_LIBRARY:[^=]*=MultiThreadedDLL$' "$cache"; then
-    echo "==> Removing stale Windows CMake build directory without dynamic MSVC runtime: $build"
+  elif ! grep -Eq '^CMAKE_MSVC_RUNTIME_LIBRARY:[^=]*=MultiThreaded$' "$cache"; then
+    echo "==> Removing stale Windows CMake build directory without static MSVC runtime: $build"
     rm -rf "$build"
   fi
 }
@@ -438,8 +438,12 @@ cmake_configure() {
     local windows_c_flags="${CFLAGS:-}"
     local windows_cxx_flags="${CXXFLAGS:-}"
     local windows_compat_defines="-DWIN32 -D_WINDOWS -DNOMINMAX -DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS"
-    windows_c_flags="${windows_c_flags:+$windows_c_flags }-MD $windows_compat_defines"
-    windows_cxx_flags="${windows_cxx_flags:+$windows_cxx_flags }-MD -EHsc $windows_compat_defines"
+    # Build Windows components with one CRT model.  SPIRV-Tools' static import
+    # libraries are consumed by the validation layer DLL, so mixing /MT and /MD
+    # trips MSVC LNK2038 RuntimeLibrary checks. Use dash-form flags so Git Bash
+    # does not rewrite /MT or /EHsc as Unix paths before CMake sees them.
+    windows_c_flags="${windows_c_flags:+$windows_c_flags }-MT $windows_compat_defines"
+    windows_cxx_flags="${windows_cxx_flags:+$windows_cxx_flags }-MT -EHsc $windows_compat_defines"
     args+=(
       -DCMAKE_C_COMPILER="$windows_c_compiler"
       -DCMAKE_CXX_COMPILER="$windows_cxx_compiler"
@@ -448,7 +452,7 @@ cmake_configure() {
       -DCMAKE_RC_COMPILER="$windows_rc"
       -DCMAKE_MT="$windows_mt"
       -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
-      -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL
+      -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
       -DCMAKE_C_FLAGS="$windows_c_flags"
       -DCMAKE_CXX_FLAGS="$windows_cxx_flags"
     )
