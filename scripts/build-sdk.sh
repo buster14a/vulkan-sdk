@@ -717,8 +717,11 @@ build_validation_layers() {
 }
 
 build_extension_layer() {
+  # Use the already-built SDK dependencies instead of ExtensionLayer's
+  # update_deps.py. Its nested Windows dependency builds do not receive our MSVC
+  # runtime settings, which can mix /MD utility libraries into /MT layer DLLs.
   cmake_install Vulkan-ExtensionLayer "$src_dir/Vulkan-ExtensionLayer" "$build_dir/extension-layer-$platform-$arch" \
-    -DUPDATE_DEPS=ON \
+    -DUPDATE_DEPS=OFF \
     -DBUILD_TESTS=OFF \
     -DVULKAN_HEADERS_INSTALL_DIR="$common_prefix" \
     -DVULKAN_UTILITY_LIBRARIES_INSTALL_DIR="$arch_prefix"
