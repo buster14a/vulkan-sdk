@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-sdk_dir=${1:-dist/custom-vulkan-sdk}
+sdk_dir=${1:-dist/vulkan-sdk-1.4.350.0}
 platform=${2:-}
 arch=${3:-}
 max_glibc=${MAX_GLIBC_VERSION:-}

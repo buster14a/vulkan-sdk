@@ -80,19 +80,19 @@ jobs:
           - platform: linux
             arch: x86_64
             runner: ubuntu-22.04
-            package_ext: tar.gz
+            package_ext: tar
           - platform: linux
             arch: aarch64
             runner: ubuntu-22.04-arm
-            package_ext: tar.gz
+            package_ext: tar
           - platform: macos
             arch: x86_64
             runner: macos-15-intel
-            package_ext: tar.gz
+            package_ext: tar
           - platform: macos
             arch: aarch64
             runner: macos-15
-            package_ext: tar.gz
+            package_ext: tar
           - platform: windows
             arch: x86_64
             runner: windows-2022
@@ -106,7 +106,7 @@ jobs:
 
     env:
       COMPONENTS: ${{ github.event.inputs.components || 'all' }}
-      VULKAN_SDK_REF: ${{ github.event.inputs.current_vulkan_sdk_tag || '' }}
+      VULKAN_SDK_REF: ${{ github.event.inputs.current_vulkan_sdk_tag || 'vulkan-sdk-1.4.350.0' }}
       VULKAN_HEADERS_REF: ${{ github.event.inputs.vulkan_headers_ref || '' }}
       VULKAN_LOADER_REF: ${{ github.event.inputs.vulkan_loader_ref || '' }}
       VULKAN_UTILITY_LIBRARIES_REF: ${{ github.event.inputs.vulkan_utility_libraries_ref || '' }}
@@ -209,6 +209,16 @@ jobs:
           cl 2>&1 | head -n 2 || true
           dumpbin 2>&1 | head -n 2 || true
 
+      - name: Set SDK artifact names
+        id: sdk-names
+        run: |
+          set -eux
+          sdk_version="${VULKAN_SDK_VERSION:-${VULKAN_SDK_REF#vulkan-sdk-}}"
+          echo "VULKAN_SDK_VERSION=$sdk_version" >> "$GITHUB_ENV"
+          echo "VULKAN_SDK_DIR=dist/vulkan-sdk-$sdk_version" >> "$GITHUB_ENV"
+          echo "VULKAN_SDK_ARTIFACT=vulkan-sdk-$sdk_version-${{ matrix.platform }}-${{ matrix.arch }}" >> "$GITHUB_ENV"
+          echo "artifact=vulkan-sdk-$sdk_version-${{ matrix.platform }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+
       - name: Build SDK
         run: |
           set -eux
@@ -218,30 +228,31 @@ jobs:
           scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Verify SDK
-        run: scripts/verify-sdk.sh dist/custom-vulkan-sdk ${{ matrix.platform }} ${{ matrix.arch }}
+        run: scripts/verify-sdk.sh "$VULKAN_SDK_DIR" ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Package SDK tarball
-        if: ${{ matrix.package_ext == 'tar.gz' }}
+        if: ${{ matrix.package_ext == 'tar' }}
         run: |
           set -eux
-          tar -C dist -czf custom-vulkan-sdk-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz \
-            custom-vulkan-sdk/${{ matrix.platform }}-${{ matrix.arch }} \
-            custom-vulkan-sdk/setup-env.sh \
-            custom-vulkan-sdk/setup-env.ps1
+          sdk_root="$(basename "$VULKAN_SDK_DIR")"
+          tar -C dist -cf "$VULKAN_SDK_ARTIFACT.tar" \
+            "$sdk_root/${{ matrix.platform }}-${{ matrix.arch }}" \
+            "$sdk_root/setup-env.sh" \
+            "$sdk_root/setup-env.ps1"
 
       - name: Package SDK zip
         if: ${{ matrix.package_ext == 'zip' }}
         run: |
           set -eux
           python scripts/package-sdk-zip.py \
-            dist/custom-vulkan-sdk \
+            "$VULKAN_SDK_DIR" \
             ${{ matrix.platform }} \
             ${{ matrix.arch }} \
-            custom-vulkan-sdk-${{ matrix.platform }}-${{ matrix.arch }}.zip
+            "$VULKAN_SDK_ARTIFACT.zip"
 
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: custom-vulkan-sdk-${{ matrix.platform }}-${{ matrix.arch }}
-          path: custom-vulkan-sdk-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.package_ext }}
+          name: ${{ steps.sdk-names.outputs.artifact }}-${{ runner.name }}
+          path: ${{ steps.sdk-names.outputs.artifact }}.${{ matrix.package_ext }}
           if-no-files-found: error

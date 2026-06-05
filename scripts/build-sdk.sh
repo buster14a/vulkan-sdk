@@ -6,12 +6,13 @@ usage() {
 Usage: scripts/build-sdk.sh [linux|windows|macos] <x86_64|aarch64>
        scripts/build-sdk.sh <x86_64|aarch64>   # backwards-compatible Linux form
 
-Build a Vulkan SDK-style install tree under dist/custom-vulkan-sdk/<platform>-<arch>.
+Build a Vulkan SDK-style install tree under dist/vulkan-sdk-<version>/<platform>-<arch>.
 By default this builds the full component set.
 
 Environment variables:
   COMPONENTS             Comma list, "minimal", or "all" (default: all)
   VULKAN_SDK_REF         Common SDK tag for SDK-aligned upstreams (default: current_vulkan_sdk_tag)
+  VULKAN_SDK_VERSION     Version suffix for output folder names (default: VULKAN_SDK_REF without vulkan-sdk- prefix)
   VULKAN_HEADERS_REF     Optional override for KhronosGroup/Vulkan-Headers
   VULKAN_LOADER_REF      Optional override for KhronosGroup/Vulkan-Loader
   VULKAN_UTILITY_LIBRARIES_REF Optional override for KhronosGroup/Vulkan-Utility-Libraries
@@ -71,11 +72,15 @@ case "$arch" in
 esac
 
 root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+current_vulkan_sdk_tag=vulkan-sdk-1.4.350.0
+current_shaderc_commit=2a6a038115f801b142b94b53382a932acdb0edfc
+default_vulkan_sdk_ref=${VULKAN_SDK_REF:-$current_vulkan_sdk_tag}
+sdk_version=${VULKAN_SDK_VERSION:-${default_vulkan_sdk_ref#vulkan-sdk-}}
 work_dir=${WORK_DIR:-"$root_dir/.build"}
 dist_dir=${DIST_DIR:-"$root_dir/dist"}
 src_dir="$work_dir/src"
 build_dir="$work_dir/build"
-sdk_dir="$dist_dir/custom-vulkan-sdk"
+sdk_dir="$dist_dir/vulkan-sdk-$sdk_version"
 common_prefix="$sdk_dir/common"
 arch_prefix="$sdk_dir/$platform-$arch"
 
@@ -88,10 +93,6 @@ else
 fi
 jobs=${JOBS:-$default_jobs}
 
-current_vulkan_sdk_tag=vulkan-sdk-1.4.350.0
-current_shaderc_commit=2a6a038115f801b142b94b53382a932acdb0edfc
-
-default_vulkan_sdk_ref=${VULKAN_SDK_REF:-$current_vulkan_sdk_tag}
 headers_ref=${VULKAN_HEADERS_REF:-$default_vulkan_sdk_ref}
 loader_ref=${VULKAN_LOADER_REF:-$default_vulkan_sdk_ref}
 utility_ref=${VULKAN_UTILITY_LIBRARIES_REF:-$default_vulkan_sdk_ref}
@@ -119,6 +120,7 @@ windows_lib=
 windows_rc=
 windows_mt=
 windows_dumpbin=
+forgejo_runner_dir=
 
 host_arch=$(uname -m)
 case "$host_arch" in
@@ -180,6 +182,45 @@ unix_find() {
   done
 
   command find "$@"
+}
+
+ensure_forgejo_runner_dir() {
+  forgejo_runner_dir=/var/lib/forgejo-runner
+
+  case "$host_os" in
+    Darwin*) forgejo_runner_dir=/Users/forgejo-runner ;;
+    MINGW*|MSYS*|CYGWIN*) forgejo_runner_dir=C:/forgejo-runner ;;
+  esac
+
+  if [[ ! -d "$forgejo_runner_dir" ]]; then
+    echo "$forgejo_runner_dir does not exist. Create it before building and make it writable by this user." >&2
+    exit 2
+  fi
+
+  if [[ ! -w "$forgejo_runner_dir" ]]; then
+    echo "$forgejo_runner_dir exists but is not writable by this user." >&2
+    exit 2
+  fi
+}
+
+install_forgejo_artifact() {
+  local artifact_base="vulkan-sdk-$sdk_version-$platform-$arch"
+  local sdk_root_name
+  sdk_root_name=$(basename "$sdk_dir")
+
+  if [[ "$platform" == windows ]]; then
+    local artifact="$forgejo_runner_dir/$artifact_base.zip"
+    "$python_cmd" "$root_dir/scripts/package-sdk-zip.py" "$sdk_dir" "$platform" "$arch" "$artifact"
+    echo "==> Installed Forgejo artifact: $artifact"
+    return
+  fi
+
+  local artifact="$forgejo_runner_dir/$artifact_base.tar"
+  tar -C "$dist_dir" -cf "$artifact" \
+    "$sdk_root_name/$platform-$arch" \
+    "$sdk_root_name/setup-env.sh" \
+    "$sdk_root_name/setup-env.ps1"
+  echo "==> Installed Forgejo artifact: $artifact"
 }
 
 normalize_bool() {
@@ -335,7 +376,7 @@ EOF
 write_setup_env_sh() {
   cat > "$sdk_dir/setup-env.sh" <<'EOF'
 #!/usr/bin/env bash
-# Source this file: source /path/to/custom-vulkan-sdk/setup-env.sh
+# Source this file: source /path/to/vulkan-sdk-<version>/setup-env.sh
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   echo "This script must be sourced, not executed." >&2
@@ -372,7 +413,7 @@ EOF
 write_setup_env_ps1() {
   cat > "$sdk_dir/setup-env.ps1" <<'EOF'
 # Source this file from PowerShell:
-#   . .\custom-vulkan-sdk\setup-env.ps1
+#   . .\vulkan-sdk-<version>\setup-env.ps1
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Machine = $env:PROCESSOR_ARCHITECTURE
@@ -826,6 +867,8 @@ build_slang_component() {
 
 check_native_platform
 
+ensure_forgejo_runner_dir
+
 echo "==> Components: $components"
 echo "==> Fetching component sources"
 fetch_component_sources
@@ -848,6 +891,8 @@ has_component vulkan-profiles && build_vulkan_profiles
 has_component slang && build_slang_component
 
 write_component_manifest
+
+install_forgejo_artifact
 
 echo "==> Installed $platform-$arch files under $arch_prefix"
 unix_find "$arch_prefix" -maxdepth 3 -type f | sort

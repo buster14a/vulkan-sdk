@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-sdk_dir=${1:-dist/custom-vulkan-sdk}
+sdk_dir=${1:-dist/vulkan-sdk-1.4.350.0}
 max_glibc=${MAX_GLIBC_VERSION:-}
 
 if [[ ! -d "$sdk_dir" ]]; then
