@@ -214,10 +214,12 @@ jobs:
         run: |
           set -eux
           sdk_version="${VULKAN_SDK_VERSION:-${VULKAN_SDK_REF#vulkan-sdk-}}"
+          sdk_artifact="vulkan-sdk-$sdk_version-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.runner }}"
           echo "VULKAN_SDK_VERSION=$sdk_version" >> "$GITHUB_ENV"
           echo "VULKAN_SDK_DIR=dist/vulkan-sdk-$sdk_version" >> "$GITHUB_ENV"
-          echo "VULKAN_SDK_ARTIFACT=vulkan-sdk-$sdk_version-${{ matrix.platform }}-${{ matrix.arch }}" >> "$GITHUB_ENV"
-          echo "artifact=vulkan-sdk-$sdk_version-${{ matrix.platform }}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+          echo "VULKAN_SDK_ARTIFACT=$sdk_artifact" >> "$GITHUB_ENV"
+          echo "VULKAN_SDK_ARTIFACT_RUNNER=${{ matrix.runner }}" >> "$GITHUB_ENV"
+          echo "artifact=$sdk_artifact" >> "$GITHUB_OUTPUT"
 
       - name: Build SDK
         run: |
@@ -253,6 +255,6 @@ jobs:
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.sdk-names.outputs.artifact }}-${{ runner.name }}
+          name: ${{ steps.sdk-names.outputs.artifact }}
           path: ${{ steps.sdk-names.outputs.artifact }}.${{ matrix.package_ext }}
           if-no-files-found: error

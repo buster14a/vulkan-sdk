@@ -39,6 +39,7 @@ Environment variables:
   WORK_DIR               Build/source directory (default: .build)
   DIST_DIR               Output directory (default: dist)
   JOBS                   Parallel build jobs (default: nproc/sysctl/2)
+  VULKAN_SDK_ARTIFACT_RUNNER Optional runner-name suffix for installed Forgejo artifacts
 USAGE
 }
 
@@ -205,6 +206,10 @@ ensure_forgejo_runner_dir() {
 
 install_forgejo_artifact() {
   local artifact_base="vulkan-sdk-$sdk_version-$platform-$arch"
+  local artifact_runner="${VULKAN_SDK_ARTIFACT_RUNNER:-${RUNNER_NAME:-}}"
+  if [[ -n "$artifact_runner" ]]; then
+    artifact_base="$artifact_base-$artifact_runner"
+  fi
   local sdk_root_name
   sdk_root_name=$(basename "$sdk_dir")
 
