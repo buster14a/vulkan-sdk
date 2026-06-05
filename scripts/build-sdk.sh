@@ -827,10 +827,10 @@ build_slang_component() {
   )
 
   # Reuse Linux SPIR-V headers only. Reusing an installed SPIRV-Tools package
-  # makes Slang's optional slang-glslang module emit bare -lSPIRV-Tools-* linker
+  # makes Slang's slang-glslang runtime module emit bare -lSPIRV-Tools-* linker
   # flags on some runners, which can fail without matching -L search paths.
-  # Slang's standalone glslang wrapper is disabled below; this SDK already ships
-  # glslangValidator separately.
+  # Keep glslang/SPIRV-Tools bundled for that module so installed slangc can
+  # load the in-process downstream compiler needed for SPIR-V emit/validation.
   if [[ "$platform" == linux ]]; then
     if has_component spirv-headers; then
       extra+=(-DSLANG_USE_SYSTEM_SPIRV_HEADERS=ON)
@@ -843,7 +843,7 @@ build_slang_component() {
     )
   fi
 
-  if [[ -f "$slang_build/CMakeCache.txt" ]] && grep -Eq '^(SLANG_ENABLE_SLANG_GLSLANG|SLANG_USE_SYSTEM_SPIRV_TOOLS):[^=]*=ON' "$slang_build/CMakeCache.txt"; then
+  if [[ -f "$slang_build/CMakeCache.txt" ]] && grep -Eq '^(SLANG_USE_SYSTEM_(GLSLANG|SPIRV_TOOLS)):[^=]*=ON|^SLANG_ENABLE_SLANG_GLSLANG:[^=]*=OFF' "$slang_build/CMakeCache.txt"; then
     echo "==> Removing stale Slang CMake build directory with incompatible dependency settings: $slang_build"
     rm -rf "$slang_build"
   fi
@@ -853,7 +853,7 @@ build_slang_component() {
     -DSLANG_ENABLE_SLANGD=ON \
     -DSLANG_ENABLE_SLANGI=ON \
     -DSLANG_ENABLE_SLANGRT=ON \
-    -DSLANG_ENABLE_SLANG_GLSLANG=OFF \
+    -DSLANG_ENABLE_SLANG_GLSLANG=ON \
     -DSLANG_ENABLE_TESTS=OFF \
     -DSLANG_ENABLE_EXAMPLES=OFF \
     -DSLANG_ENABLE_GFX=OFF \

@@ -107,6 +107,39 @@ require_match() {
   fi
 }
 
+verify_slang_spirv_compile() {
+  local slangc="$prefix/bin/slangc"
+  if [[ "$platform" == windows ]]; then
+    slangc="$prefix/bin/slangc.exe"
+  fi
+
+  local tmp_dir
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/vulkan-sdk-slang.XXXXXX")
+  cat > "$tmp_dir/smoke.slang" <<'SLANG'
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void main() {}
+SLANG
+
+  local status=0
+  "$slangc" "$tmp_dir/smoke.slang" \
+    -entry main \
+    -stage compute \
+    -target spirv \
+    -emit-spirv-directly \
+    -o "$tmp_dir/smoke.spv" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    rm -rf "$tmp_dir"
+    exit "$status"
+  fi
+  if [[ ! -s "$tmp_dir/smoke.spv" ]]; then
+    echo "Slang SPIR-V smoke compile did not produce output: $tmp_dir/smoke.spv" >&2
+    rm -rf "$tmp_dir"
+    exit 1
+  fi
+  rm -rf "$tmp_dir"
+}
+
 version_gt() {
   local a=$1
   local b=$2
@@ -182,11 +215,12 @@ has_component vulkan-profiles && require_match "Vulkan profiles artifact" -iname
 has_component slang && require_exe slangc
 
 if has_component slang; then
-  if [[ "$platform" == windows ]]; then
-    "$prefix/bin/slangc.exe" -version || true
-  else
-    "$prefix/bin/slangc" -version || true
-  fi
+  case "$platform" in
+    linux) require_match "Slang glslang runtime module" -name 'libslang-glslang-*.so' ;;
+    macos) require_match "Slang glslang runtime module" -name 'libslang-glslang-*.dylib' ;;
+    windows) require_match "Slang glslang runtime module" -iname 'slang-glslang*.dll' ;;
+  esac
+  verify_slang_spirv_compile
 fi
 
 echo "SDK verification passed for $platform-$arch with components: $components"
