@@ -436,6 +436,13 @@ cmake_configure() {
   if [[ "$platform" != windows ]]; then
     args+=(-DCMAKE_POSITION_INDEPENDENT_CODE=ON)
   fi
+  if [[ "$platform" == linux ]]; then
+    # Keep all Linux SDKs in the same lib/ layout.  Fedora and some other
+    # 64-bit distributions default GNUInstallDirs to lib64/, but setup-env.sh,
+    # pkg-config paths, packaging, and verification expect SDK-local libraries
+    # under lib/ for every Linux architecture.
+    args+=(-DCMAKE_INSTALL_LIBDIR=lib)
+  fi
 
   if [[ -n "$prefix_path" ]]; then
     args+=(-DCMAKE_PREFIX_PATH="$prefix_path")
