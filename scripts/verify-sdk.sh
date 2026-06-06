@@ -107,6 +107,23 @@ require_match() {
   fi
 }
 
+run_with_sdk_runtime_env() {
+  local -a env_args=()
+  case "$platform" in
+    linux)
+      env_args+=(LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}")
+      ;;
+    macos)
+      env_args+=(DYLD_LIBRARY_PATH="$prefix/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}")
+      ;;
+    windows)
+      env_args+=(PATH="$prefix/bin${PATH:+:$PATH}")
+      ;;
+  esac
+
+  env "${env_args[@]}" "$@"
+}
+
 verify_slang_spirv_compile() {
   local slangc="$prefix/bin/slangc"
   if [[ "$platform" == windows ]]; then
@@ -122,7 +139,7 @@ void main() {}
 SLANG
 
   local status=0
-  "$slangc" "$tmp_dir/smoke.slang" \
+  run_with_sdk_runtime_env "$slangc" "$tmp_dir/smoke.slang" \
     -entry main \
     -stage compute \
     -target spirv \
