@@ -396,14 +396,27 @@ EOF
 write_setup_env_sh() {
   cat > "$sdk_dir/setup-env.sh" <<'EOF'
 #!/usr/bin/env bash
-# Source this file: source /path/to/vulkan-sdk-<version>/setup-env.sh
+# Source this file from bash or zsh:
+#   source /path/to/vulkan-sdk-<version>/setup-env.sh
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  echo "This script must be sourced, not executed." >&2
-  exit 1
+if [[ -n "${BASH_VERSION:-}" ]]; then
+  if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    echo "This script must be sourced, not executed." >&2
+    exit 1
+  fi
+  SDK_SETUP_SCRIPT="${BASH_SOURCE[0]}"
+elif [[ -n "${ZSH_VERSION:-}" ]]; then
+  if [[ ":${ZSH_EVAL_CONTEXT:-}:" != *:file:* ]]; then
+    echo "This script must be sourced, not executed." >&2
+    exit 1
+  fi
+  SDK_SETUP_SCRIPT="${(%):-%x}"
+else
+  echo "Unsupported shell. Source this script from bash or zsh." >&2
+  return 1 2>/dev/null || exit 1
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "$SDK_SETUP_SCRIPT")" && pwd)"
 case "$(uname -s)" in
   Linux*) PLATFORM=linux ;;
   Darwin*) PLATFORM=macos ;;
@@ -426,6 +439,8 @@ case "$PLATFORM" in
   linux) export LD_LIBRARY_PATH="$VULKAN_SDK/lib:${LD_LIBRARY_PATH:-}" ;;
   macos) export DYLD_LIBRARY_PATH="$VULKAN_SDK/lib:${DYLD_LIBRARY_PATH:-}" ;;
 esac
+
+unset SDK_SETUP_SCRIPT
 EOF
   chmod +x "$sdk_dir/setup-env.sh"
 }
