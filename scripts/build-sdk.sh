@@ -39,6 +39,8 @@ Environment variables:
   WORK_DIR               Build/source directory (default: .build)
   DIST_DIR               Output directory (default: dist)
   JOBS                   Parallel build jobs (default: nproc/sysctl/2)
+  VULKAN_SDK_INSTALL_FORGEJO_ARTIFACT ON/OFF to copy a tar/zip to a Forgejo artifact directory (default: ON when VULKAN_SDK_ARTIFACT_RUNNER or RUNNER_NAME is set; otherwise OFF)
+  VULKAN_SDK_ARTIFACT_DIR Optional directory for that tar/zip copy (default: platform Forgejo runner home)
   VULKAN_SDK_ARTIFACT_RUNNER Optional runner-name suffix for installed Forgejo artifacts
 USAGE
 }
@@ -114,6 +116,7 @@ slang_lib_type=${SLANG_LIB_TYPE:-SHARED}
 enable_wsi=${ENABLE_WSI:-ON}
 prefer_static_libs=${PREFER_STATIC_LIBS:-ON}
 keep_build_dirs=${KEEP_BUILD_DIRS:-OFF}
+install_forgejo_artifact=${VULKAN_SDK_INSTALL_FORGEJO_ARTIFACT:-}
 windows_c_compiler=${WINDOWS_CMAKE_C_COMPILER:-cl}
 windows_cxx_compiler=${WINDOWS_CMAKE_CXX_COMPILER:-cl}
 windows_linker=
@@ -186,12 +189,15 @@ unix_find() {
 }
 
 ensure_forgejo_runner_dir() {
-  forgejo_runner_dir=/var/lib/forgejo-runner
+  forgejo_runner_dir=${VULKAN_SDK_ARTIFACT_DIR:-}
 
-  case "$host_os" in
-    Darwin*) forgejo_runner_dir=/Users/forgejo-runner ;;
-    MINGW*|MSYS*|CYGWIN*) forgejo_runner_dir=C:/forgejo-runner ;;
-  esac
+  if [[ -z "$forgejo_runner_dir" ]]; then
+    forgejo_runner_dir=/var/lib/forgejo-runner
+    case "$host_os" in
+      Darwin*) forgejo_runner_dir=/Users/forgejo-runner ;;
+      MINGW*|MSYS*|CYGWIN*) forgejo_runner_dir=C:/forgejo-runner ;;
+    esac
+  fi
 
   if [[ ! -d "$forgejo_runner_dir" ]]; then
     echo "$forgejo_runner_dir does not exist. Create it before building and make it writable by this user." >&2
@@ -253,6 +259,15 @@ slang_enable_dxil=$(normalize_bool SLANG_ENABLE_DXIL "$slang_enable_dxil")
 slang_lib_type=$(normalize_slang_lib_type "$slang_lib_type")
 prefer_static_libs=$(normalize_bool PREFER_STATIC_LIBS "$prefer_static_libs")
 keep_build_dirs=$(normalize_bool KEEP_BUILD_DIRS "$keep_build_dirs")
+if [[ -z "$install_forgejo_artifact" ]]; then
+  if [[ -n "${VULKAN_SDK_ARTIFACT_RUNNER:-${RUNNER_NAME:-}}" ]]; then
+    install_forgejo_artifact=ON
+  else
+    install_forgejo_artifact=OFF
+  fi
+else
+  install_forgejo_artifact=$(normalize_bool VULKAN_SDK_INSTALL_FORGEJO_ARTIFACT "$install_forgejo_artifact")
+fi
 
 full_components="vulkan-headers,vulkan-loader,vulkan-utility-libraries,spirv-headers,spirv-tools,glslang,spirv-cross,shaderc,vulkan-tools,vulkan-validationlayers,vulkan-extensionlayer,vulkan-profiles,slang"
 minimal_components="vulkan-headers,vulkan-loader,slang"
@@ -872,7 +887,9 @@ build_slang_component() {
 
 check_native_platform
 
-ensure_forgejo_runner_dir
+if [[ "$install_forgejo_artifact" == ON ]]; then
+  ensure_forgejo_runner_dir
+fi
 
 echo "==> Components: $components"
 echo "==> Fetching component sources"
@@ -897,7 +914,11 @@ has_component slang && build_slang_component
 
 write_component_manifest
 
-install_forgejo_artifact
+if [[ "$install_forgejo_artifact" == ON ]]; then
+  install_forgejo_artifact
+else
+  echo "==> Forgejo artifact copy disabled; SDK output remains under $sdk_dir"
+fi
 
 echo "==> Installed $platform-$arch files under $arch_prefix"
 unix_find "$arch_prefix" -maxdepth 3 -type f | sort
