@@ -84,32 +84,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: linux
-            arch: x86_64
-            runner: x86_64-linux-debian
-            package_ext: tar.gz
-          - platform: linux
-            arch: x86_64
-            runner: x86_64-linux-ubuntu
-            package_ext: tar.gz
-          - platform: linux
-            arch: x86_64
-            runner: x86_64-linux-znver5
-            package_ext: tar.gz
-          - platform: linux
-            arch: aarch64
-            runner: aarch64-linux-fedora
-            package_ext: tar.gz
-          - platform: macos
-            arch: aarch64
-            runner: aarch64-macos-m1
-            package_ext: tar.gz
-          - platform: windows
-            arch: x86_64
-            runner: x86_64-windows-znver5
-            package_ext: zip
-            msvc_arch: x64
+        runner:
+          - x86_64-linux
+          - aarch64-macos-m1
+          - x86_64-windows-znver5
 
     env:
       COMPONENTS: ${{ github.event.inputs.components || 'all' }}
@@ -138,8 +116,49 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set target variables
+        id: target
+        run: |
+          set -euo pipefail
+          case '${{ matrix.runner }}' in
+            x86_64-linux)
+              platform=linux
+              arch=x86_64
+              package_ext=tar.gz
+              ;;
+            aarch64-macos-m1)
+              platform=macos
+              arch=aarch64
+              package_ext=tar.gz
+              ;;
+            x86_64-windows-znver5)
+              platform=windows
+              arch=x86_64
+              package_ext=zip
+              msvc_arch=x64
+              ;;
+            *)
+              echo "unsupported runner: ${{ matrix.runner }}" >&2
+              exit 2
+              ;;
+          esac
+
+          {
+            echo "platform=$platform"
+            echo "arch=$arch"
+            echo "package_ext=$package_ext"
+            echo "msvc_arch=${msvc_arch:-}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "TARGET_PLATFORM=$platform"
+            echo "TARGET_ARCH=$arch"
+            echo "TARGET_PACKAGE_EXT=$package_ext"
+            echo "TARGET_MSVC_ARCH=${msvc_arch:-}"
+          } >> "$GITHUB_ENV"
+
       - name: Install Linux build dependencies
-        if: ${{ matrix.platform == 'linux' }}
+        if: ${{ steps.target.outputs.platform == 'linux' }}
         run: |
           set -eux
           #if command -v apt-get >/dev/null 2>&1; then
@@ -173,7 +192,7 @@ jobs:
           ninja --version
 
       - name: Install macOS build dependencies
-        if: ${{ matrix.platform == 'macos' }}
+        if: ${{ steps.target.outputs.platform == 'macos' }}
         run: |
           set -eux
           command -v cmake
@@ -189,7 +208,7 @@ jobs:
           ninja --version
 
       - name: Check Windows Ninja build dependency
-        if: ${{ matrix.platform == 'windows' }}
+        if: ${{ steps.target.outputs.platform == 'windows' }}
         run: |
           set -eux
           export PATH="/c/ProgramData/chocolatey/bin:$PATH"
@@ -204,11 +223,11 @@ jobs:
           [[ ! -d '/c/ProgramData/chocolatey/bin' ]] || echo 'C:\ProgramData\chocolatey\bin' >> "$GITHUB_PATH"
 
       - name: Import MSVC ABI environment
-        if: ${{ matrix.platform == 'windows' }}
+        if: ${{ steps.target.outputs.platform == 'windows' }}
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $arch = '${{ matrix.msvc_arch }}'
+          $arch = '${{ steps.target.outputs.msvc_arch }}'
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $installationPath = $null
           if (Test-Path $vswhere) {
@@ -279,7 +298,7 @@ jobs:
           Set-Content -Path $bashEnv -Value $bashLines -Encoding ascii
 
       - name: Check Windows build dependencies
-        if: ${{ matrix.platform == 'windows' }}
+        if: ${{ steps.target.outputs.platform == 'windows' }}
         run: |
           set -eux
           [[ ! -f .build/msvc-env.sh ]] || source .build/msvc-env.sh
@@ -301,7 +320,7 @@ jobs:
         run: |
           set -eux
           sdk_version="${VULKAN_SDK_VERSION:-${VULKAN_SDK_REF#vulkan-sdk-}}"
-          sdk_artifact="vulkan-sdk-$sdk_version-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.runner }}"
+          sdk_artifact="vulkan-sdk-$sdk_version-${{ steps.target.outputs.platform }}-${{ steps.target.outputs.arch }}-${{ matrix.runner }}"
           echo "VULKAN_SDK_VERSION=$sdk_version" >> "$GITHUB_ENV"
           echo "VULKAN_SDK_DIR=dist/vulkan-sdk-$sdk_version" >> "$GITHUB_ENV"
           echo "VULKAN_SDK_ARTIFACT=$sdk_artifact" >> "$GITHUB_ENV"
@@ -311,37 +330,37 @@ jobs:
       - name: Build SDK
         run: |
           set -eux
-          if [[ '${{ matrix.platform }}' == windows && -f .build/msvc-env.sh ]]; then
+          if [[ '${{ steps.target.outputs.platform }}' == windows && -f .build/msvc-env.sh ]]; then
             source .build/msvc-env.sh
           fi
-          scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}
+          scripts/build-sdk.sh ${{ steps.target.outputs.platform }} ${{ steps.target.outputs.arch }}
 
       - name: Verify SDK
-        run: scripts/verify-sdk.sh "$VULKAN_SDK_DIR" ${{ matrix.platform }} ${{ matrix.arch }}
+        run: scripts/verify-sdk.sh "$VULKAN_SDK_DIR" ${{ steps.target.outputs.platform }} ${{ steps.target.outputs.arch }}
 
       - name: Package SDK tarball
-        if: ${{ matrix.package_ext == 'tar.gz' }}
+        if: ${{ steps.target.outputs.package_ext == 'tar.gz' }}
         run: |
           set -eux
           sdk_root="$(basename "$VULKAN_SDK_DIR")"
           tar -C dist -czf "$VULKAN_SDK_ARTIFACT.tar.gz" \
-            "$sdk_root/${{ matrix.platform }}-${{ matrix.arch }}" \
+            "$sdk_root/${{ steps.target.outputs.platform }}-${{ steps.target.outputs.arch }}" \
             "$sdk_root/setup-env.sh" \
             "$sdk_root/setup-env.ps1"
 
       - name: Package SDK zip
-        if: ${{ matrix.package_ext == 'zip' }}
+        if: ${{ steps.target.outputs.package_ext == 'zip' }}
         run: |
           set -eux
           python scripts/package-sdk-zip.py \
             "$VULKAN_SDK_DIR" \
-            ${{ matrix.platform }} \
-            ${{ matrix.arch }} \
+            ${{ steps.target.outputs.platform }} \
+            ${{ steps.target.outputs.arch }} \
             "$VULKAN_SDK_ARTIFACT.zip"
 
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v3
         with:
           name: ${{ steps.sdk-names.outputs.artifact }}
-          path: ${{ steps.sdk-names.outputs.artifact }}.${{ matrix.package_ext }}
+          path: ${{ steps.sdk-names.outputs.artifact }}.${{ steps.target.outputs.package_ext }}
           if-no-files-found: error
