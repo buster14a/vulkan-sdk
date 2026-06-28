@@ -88,6 +88,7 @@ jobs:
           - x86_64-linux-dedicated
           - x86_64-linux
           - aarch64-macos-m1
+          - aarch64-macos-dedicated
           - x86_64-windows-znver5
 
     env:
@@ -127,12 +128,12 @@ jobs:
               arch=x86_64
               package_ext=tar.gz
               ;;
-            aarch64-macos-m1)
+            aarch64-macos*)
               platform=macos
               arch=aarch64
               package_ext=tar.gz
               ;;
-            x86_64-windows-znver5)
+            x86_64-windows*)
               platform=windows
               arch=x86_64
               package_ext=zip
