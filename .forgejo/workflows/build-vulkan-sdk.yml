@@ -87,8 +87,7 @@ jobs:
         runner:
           - x86_64-linux-dedicated
           - x86_64-linux
-          - aarch64-macos-m1
-          - aarch64-macos-dedicated
+          - aarch64-macos-mini
           - x86_64-windows-znver5
 
     env:
