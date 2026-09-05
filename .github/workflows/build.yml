@@ -1,12 +1,7 @@
 name: build-vulkan-sdk
 
-# Shared self-hosted runner labels used by the buster14a/buster CI fleet:
-#   x86_64-linux-dedicated, x86_64-linux
-#   aarch64-macos-mini, x86_64-windows-znver5
-#
-# Windows runners must have Git Bash, CMake, Python, Ninja, and Visual Studio
-# Build Tools installed. The workflow imports the MSVC developer environment
-# locally; it does not use LLVM clang, MinGW, or containers.
+# GitHub-hosted runner matrix. The SDK packages are built remotely on GitHub's
+# standard Linux, macOS, and Windows runner images.
 
 on:
   push:
@@ -73,7 +68,7 @@ on:
 
 jobs:
   build:
-    name: ${{ matrix.runner }} SDK
+    name: ${{ matrix.platform }} ${{ matrix.arch }} SDK
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
 
@@ -84,11 +79,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - x86_64-linux-dedicated
-          - x86_64-linux
-          - aarch64-macos-mini
-          - x86_64-windows-znver5
+        include:
+          - platform: linux
+            arch: x86_64
+            runner: ubuntu-22.04
+            package_ext: tar.gz
+          - platform: linux
+            arch: aarch64
+            runner: ubuntu-22.04-arm
+            package_ext: tar.gz
+          - platform: macos
+            arch: x86_64
+            runner: macos-15-intel
+            package_ext: tar.gz
+          - platform: macos
+            arch: aarch64
+            runner: macos-15
+            package_ext: tar.gz
+          - platform: windows
+            arch: x86_64
+            runner: windows-2022
+            package_ext: zip
+            msvc_arch: x64
+          - platform: windows
+            arch: aarch64
+            runner: windows-11-arm
+            package_ext: zip
+            msvc_arch: arm64
 
     env:
       COMPONENTS: ${{ github.event.inputs.components || 'all' }}
@@ -106,70 +123,53 @@ jobs:
       SHADERC_REF: ${{ github.event.inputs.shaderc_ref || '' }}
       SPIRV_CROSS_REF: ${{ github.event.inputs.spirv_cross_ref || '' }}
       SLANG_REF: ${{ github.event.inputs.slang_ref || '' }}
-      BUILD_SLANG: ${{ github.event.inputs.build_slang || 'ON' }}
-      ENABLE_WSI: ${{ github.event.inputs.enable_wsi || 'ON' }}
+      BUILD_SLANG: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.build_slang == 'false') && 'OFF' || 'ON' }}
+      ENABLE_WSI: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.enable_wsi == 'false') && 'OFF' || 'ON' }}
       SLANG_LLVM_FLAVOR: DISABLE
       SLANG_ENABLE_DXIL: OFF
       PREFER_STATIC_LIBS: ON
-      VULKAN_SDK_INSTALL_FORGEJO_ARTIFACT: ON
+      VULKAN_SDK_INSTALL_FORGEJO_ARTIFACT: OFF
       JOBS: 2
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set target variables
-        id: target
-        run: |
-          set -euo pipefail
-          case '${{ matrix.runner }}' in
-            x86_64-linux*)
-              platform=linux
-              arch=x86_64
-              package_ext=tar.gz
-              ;;
-            aarch64-macos*)
-              platform=macos
-              arch=aarch64
-              package_ext=tar.gz
-              ;;
-            x86_64-windows*)
-              platform=windows
-              arch=x86_64
-              package_ext=zip
-              msvc_arch=x64
-              ;;
-            *)
-              echo "unsupported runner: ${{ matrix.runner }}" >&2
-              exit 2
-              ;;
-          esac
-
-          {
-            echo "platform=$platform"
-            echo "arch=$arch"
-            echo "package_ext=$package_ext"
-            echo "msvc_arch=${msvc_arch:-}"
-          } >> "$GITHUB_OUTPUT"
-
-          {
-            echo "TARGET_PLATFORM=$platform"
-            echo "TARGET_ARCH=$arch"
-            echo "TARGET_PACKAGE_EXT=$package_ext"
-            echo "TARGET_MSVC_ARCH=${msvc_arch:-}"
-          } >> "$GITHUB_ENV"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
       - name: Install Linux build dependencies
-        if: ${{ steps.target.outputs.platform == 'linux' }}
+        if: ${{ matrix.platform == 'linux' }}
         run: |
           set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            binutils \
+            build-essential \
+            ca-certificates \
+            cmake \
+            file \
+            git \
+            libwayland-dev \
+            wayland-protocols \
+            libx11-dev \
+            libx11-xcb-dev \
+            libxext-dev \
+            libxkbcommon-dev \
+            libxcb1-dev \
+            libxrandr-dev \
+            ninja-build \
+            pkg-config \
+            python3
           cmake --version
           git --version
           python3 --version
           ninja --version
 
       - name: Install macOS build dependencies
-        if: ${{ steps.target.outputs.platform == 'macos' }}
+        if: ${{ matrix.platform == 'macos' }}
         run: |
           set -eux
           command -v cmake
@@ -185,97 +185,23 @@ jobs:
           ninja --version
 
       - name: Check Windows Ninja build dependency
-        if: ${{ steps.target.outputs.platform == 'windows' }}
+        if: ${{ matrix.platform == 'windows' }}
         run: |
           set -eux
           export PATH="/c/ProgramData/chocolatey/bin:$PATH"
           if ! command -v ninja >/dev/null 2>&1; then
-            if command -v choco >/dev/null 2>&1; then
-              choco install ninja -y --no-progress
-            else
-              echo "ninja is required on the Windows self-hosted runner" >&2
-              exit 2
-            fi
+            choco install ninja -y --no-progress
           fi
           [[ ! -d '/c/ProgramData/chocolatey/bin' ]] || echo 'C:\ProgramData\chocolatey\bin' >> "$GITHUB_PATH"
 
-      - name: Import MSVC ABI environment
-        if: ${{ steps.target.outputs.platform == 'windows' }}
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $arch = '${{ steps.target.outputs.msvc_arch }}'
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $installationPath = $null
-          if (Test-Path $vswhere) {
-            $installationPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          }
-          if (-not $installationPath) {
-            $candidates = @(
-              "$env:ProgramFiles\Microsoft Visual Studio\18\Enterprise",
-              "$env:ProgramFiles\Microsoft Visual Studio\18\Professional",
-              "$env:ProgramFiles\Microsoft Visual Studio\18\Community",
-              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\18\BuildTools",
-              "$env:ProgramFiles\Microsoft Visual Studio\2022\Enterprise",
-              "$env:ProgramFiles\Microsoft Visual Studio\2022\Professional",
-              "$env:ProgramFiles\Microsoft Visual Studio\2022\Community",
-              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools"
-            )
-            $installationPath = $candidates | Where-Object { Test-Path (Join-Path $_ 'Common7\Tools\VsDevCmd.bat') } | Select-Object -First 1
-          }
-          if (-not $installationPath) {
-            throw 'Could not locate Visual Studio or Build Tools with MSVC toolchain.'
-          }
-          $vsdev = Join-Path $installationPath 'Common7\Tools\VsDevCmd.bat'
-          if (!(Test-Path $vsdev)) {
-            throw "VsDevCmd.bat not found: $vsdev"
-          }
-
-          $envLines = cmd.exe /s /c "`"$vsdev`" -arch=$arch -host_arch=$arch >nul && set"
-          $bashEnv = Join-Path (Get-Location) '.build/msvc-env.sh'
-          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $bashEnv) | Out-Null
-          $pathEntries = @()
-          $envVars = @{}
-          foreach ($line in $envLines) {
-            if ($line -match '^([^=]+)=(.*)$') {
-              $name = $matches[1]
-              $value = $matches[2]
-              if ($name -ieq 'Path') {
-                foreach ($entry in ($value -split ';')) {
-                  if ($entry) {
-                    $pathEntries += $entry
-                    $entry | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-                  }
-                }
-              } elseif ($name -match '^(INCLUDE|LIB|LIBPATH|WindowsSdkDir|WindowsSDKVersion|VCToolsInstallDir|VCINSTALLDIR|VSINSTALLDIR|UniversalCRTSdkDir|UCRTVersion|VSCMD_ARG_TGT_ARCH|VSCMD_VER)$') {
-                $envVars[$name] = $value
-                "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-              }
-            }
-          }
-
-          function Convert-BashPath([string]$Path) {
-            $normalized = $Path -replace '\\', '/'
-            if ($normalized -match '^([A-Za-z]):/(.*)$') {
-              return '/' + $matches[1].ToLowerInvariant() + '/' + $matches[2]
-            }
-            return $normalized
-          }
-          function Quote-Sh([string]$Value) {
-            return "'" + ($Value -replace "'", "'\''") + "'"
-          }
-          $bashPath = ($pathEntries | Where-Object { $_ } | ForEach-Object { Convert-BashPath $_ }) -join ':'
-          $bashLines = @()
-          if ($bashPath) {
-            $bashLines += 'export PATH=' + (Quote-Sh $bashPath) + ':"$PATH"'
-          }
-          foreach ($entry in $envVars.GetEnumerator()) {
-            $bashLines += 'export ' + $entry.Key + '=' + (Quote-Sh $entry.Value)
-          }
-          Set-Content -Path $bashEnv -Value $bashLines -Encoding ascii
+      - name: Set up MSVC ABI environment
+        if: ${{ matrix.platform == 'windows' }}
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
 
       - name: Check Windows build dependencies
-        if: ${{ steps.target.outputs.platform == 'windows' }}
+        if: ${{ matrix.platform == 'windows' }}
         run: |
           set -eux
           [[ ! -f .build/msvc-env.sh ]] || source .build/msvc-env.sh
@@ -297,7 +223,7 @@ jobs:
         run: |
           set -eux
           sdk_version="${VULKAN_SDK_VERSION:-${VULKAN_SDK_REF#vulkan-sdk-}}"
-          sdk_artifact="vulkan-sdk-$sdk_version-${{ steps.target.outputs.platform }}-${{ steps.target.outputs.arch }}-${{ matrix.runner }}"
+          sdk_artifact="vulkan-sdk-$sdk_version-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.runner }}"
           echo "VULKAN_SDK_VERSION=$sdk_version" >> "$GITHUB_ENV"
           echo "VULKAN_SDK_DIR=dist/vulkan-sdk-$sdk_version" >> "$GITHUB_ENV"
           echo "VULKAN_SDK_ARTIFACT=$sdk_artifact" >> "$GITHUB_ENV"
@@ -307,37 +233,37 @@ jobs:
       - name: Build SDK
         run: |
           set -eux
-          if [[ '${{ steps.target.outputs.platform }}' == windows && -f .build/msvc-env.sh ]]; then
+          if [[ '${{ matrix.platform }}' == windows && -f .build/msvc-env.sh ]]; then
             source .build/msvc-env.sh
           fi
-          scripts/build-sdk.sh ${{ steps.target.outputs.platform }} ${{ steps.target.outputs.arch }}
+          scripts/build-sdk.sh ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Verify SDK
-        run: scripts/verify-sdk.sh "$VULKAN_SDK_DIR" ${{ steps.target.outputs.platform }} ${{ steps.target.outputs.arch }}
+        run: scripts/verify-sdk.sh "$VULKAN_SDK_DIR" ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Package SDK tarball
-        if: ${{ steps.target.outputs.package_ext == 'tar.gz' }}
+        if: ${{ matrix.package_ext == 'tar.gz' }}
         run: |
           set -eux
           sdk_root="$(basename "$VULKAN_SDK_DIR")"
           tar -C dist -czf "$VULKAN_SDK_ARTIFACT.tar.gz" \
-            "$sdk_root/${{ steps.target.outputs.platform }}-${{ steps.target.outputs.arch }}" \
+            "$sdk_root/${{ matrix.platform }}-${{ matrix.arch }}" \
             "$sdk_root/setup-env.sh" \
             "$sdk_root/setup-env.ps1"
 
       - name: Package SDK zip
-        if: ${{ steps.target.outputs.package_ext == 'zip' }}
+        if: ${{ matrix.package_ext == 'zip' }}
         run: |
           set -eux
           python scripts/package-sdk-zip.py \
             "$VULKAN_SDK_DIR" \
-            ${{ steps.target.outputs.platform }} \
-            ${{ steps.target.outputs.arch }} \
+            ${{ matrix.platform }} \
+            ${{ matrix.arch }} \
             "$VULKAN_SDK_ARTIFACT.zip"
 
       - name: Upload SDK artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.sdk-names.outputs.artifact }}
-          path: ${{ steps.sdk-names.outputs.artifact }}.${{ steps.target.outputs.package_ext }}
+          path: ${{ steps.sdk-names.outputs.artifact }}.${{ matrix.package_ext }}
           if-no-files-found: error
