@@ -36,6 +36,7 @@ Environment variables:
   PYTHON                 Python interpreter to use for CMake codegen/dependency scripts (default: auto-detect python3/python)
   WINDOWS_CMAKE_C_COMPILER   MSVC C compiler for Windows builds (default: cl)
   WINDOWS_CMAKE_CXX_COMPILER MSVC C++ compiler for Windows builds (default: cl)
+  WINDOWS_LINKER             Optional MSVC linker path (default: link)
   WORK_DIR               Build/source directory (default: .build)
   DIST_DIR               Output directory (default: dist)
   JOBS                   Parallel build jobs (default: nproc/sysctl/2)
@@ -119,7 +120,7 @@ keep_build_dirs=${KEEP_BUILD_DIRS:-OFF}
 install_forgejo_artifact=${VULKAN_SDK_INSTALL_FORGEJO_ARTIFACT:-}
 windows_c_compiler=${WINDOWS_CMAKE_C_COMPILER:-cl}
 windows_cxx_compiler=${WINDOWS_CMAKE_CXX_COMPILER:-cl}
-windows_linker=
+windows_linker=${WINDOWS_LINKER:-}
 windows_lib=
 windows_rc=
 windows_mt=
@@ -667,7 +668,7 @@ check_native_platform() {
 
     windows_c_compiler=$(find_windows_exe "$windows_c_compiler" WINDOWS_CMAKE_C_COMPILER)
     windows_cxx_compiler=$(find_windows_exe "$windows_cxx_compiler" WINDOWS_CMAKE_CXX_COMPILER)
-    windows_linker=$(find_windows_exe link WINDOWS_LINKER)
+    windows_linker=$(find_windows_exe "${windows_linker:-link}" WINDOWS_LINKER)
     windows_lib=$(find_windows_exe lib WINDOWS_LIB)
     windows_rc=$(find_windows_exe rc WINDOWS_RC)
     windows_mt=$(find_windows_exe mt WINDOWS_MT)

@@ -205,7 +205,9 @@ jobs:
         shell: powershell
         run: |
           $clPath = (Get-Command cl.exe -CommandType Application -ErrorAction Stop).Source
-          Split-Path -Parent $clPath | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $msvcBin = Split-Path -Parent $clPath
+          $msvcBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "WINDOWS_LINKER=$(Join-Path $msvcBin 'link.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Check Windows build dependencies
         if: ${{ matrix.platform == 'windows' }}
