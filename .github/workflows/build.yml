@@ -1,5 +1,9 @@
 name: build-vulkan-sdk
 
+# GitHub-hosted runner matrix. Keep this workflow aligned with the
+# self-hosted Forgejo workflow while using GitHub's native runner labels and
+# actions for toolchain setup.
+
 on:
   push:
   pull_request:
@@ -80,19 +84,19 @@ jobs:
           - platform: linux
             arch: x86_64
             runner: ubuntu-22.04
-            package_ext: tar
+            package_ext: tar.gz
           - platform: linux
             arch: aarch64
             runner: ubuntu-22.04-arm
-            package_ext: tar
+            package_ext: tar.gz
           - platform: macos
             arch: x86_64
             runner: macos-15-intel
-            package_ext: tar
+            package_ext: tar.gz
           - platform: macos
             arch: aarch64
             runner: macos-15
-            package_ext: tar
+            package_ext: tar.gz
           - platform: windows
             arch: x86_64
             runner: windows-2022
@@ -125,6 +129,7 @@ jobs:
       SLANG_LLVM_FLAVOR: DISABLE
       SLANG_ENABLE_DXIL: OFF
       PREFER_STATIC_LIBS: ON
+      VULKAN_SDK_INSTALL_FORGEJO_ARTIFACT: OFF
       JOBS: 2
 
     steps:
@@ -160,6 +165,9 @@ jobs:
             pkg-config \
             python3
           cmake --version
+          git --version
+          python3 --version
+          ninja --version
 
       - name: Install macOS build dependencies
         if: ${{ matrix.platform == 'macos' }}
@@ -174,6 +182,7 @@ jobs:
             brew install pkg-config
           fi
           cmake --version
+          ninja --version
 
       - name: Check Windows Ninja build dependency
         if: ${{ matrix.platform == 'windows' }}
@@ -233,11 +242,11 @@ jobs:
         run: scripts/verify-sdk.sh "$VULKAN_SDK_DIR" ${{ matrix.platform }} ${{ matrix.arch }}
 
       - name: Package SDK tarball
-        if: ${{ matrix.package_ext == 'tar' }}
+        if: ${{ matrix.package_ext == 'tar.gz' }}
         run: |
           set -eux
           sdk_root="$(basename "$VULKAN_SDK_DIR")"
-          tar -C dist -cf "$VULKAN_SDK_ARTIFACT.tar" \
+          tar -C dist -czf "$VULKAN_SDK_ARTIFACT.tar.gz" \
             "$sdk_root/${{ matrix.platform }}-${{ matrix.arch }}" \
             "$sdk_root/setup-env.sh" \
             "$sdk_root/setup-env.ps1"
