@@ -276,3 +276,51 @@ jobs:
           name: ${{ steps.sdk-names.outputs.artifact }}
           path: ${{ steps.sdk-names.outputs.artifact }}.${{ matrix.package_ext }}
           if-no-files-found: error
+
+  publish-ci-release:
+    name: Publish stable CI packages
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download SDK packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vulkan-sdk-*
+          path: packages
+          merge-multiple: true
+
+      - name: Publish stable CI release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p release-assets
+
+          cp "$(find packages -maxdepth 1 -type f -name '*-linux-x86_64-*.tar.gz' -print -quit)" \
+            release-assets/vulkan-sdk-linux-x86_64.tar.gz
+          cp "$(find packages -maxdepth 1 -type f -name '*-linux-aarch64-*.tar.gz' -print -quit)" \
+            release-assets/vulkan-sdk-linux-aarch64.tar.gz
+          cp "$(find packages -maxdepth 1 -type f -name '*-macos-x86_64-*.tar.gz' -print -quit)" \
+            release-assets/vulkan-sdk-macos-x86_64.tar.gz
+          cp "$(find packages -maxdepth 1 -type f -name '*-macos-aarch64-*.tar.gz' -print -quit)" \
+            release-assets/vulkan-sdk-macos-aarch64.tar.gz
+          cp "$(find packages -maxdepth 1 -type f -name '*-windows-x86_64-*.zip' -print -quit)" \
+            release-assets/vulkan-sdk-windows-x86_64.zip
+          cp "$(find packages -maxdepth 1 -type f -name '*-windows-aarch64-*.zip' -print -quit)" \
+            release-assets/vulkan-sdk-windows-aarch64.zip
+
+          if ! gh release view ci-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create ci-latest \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title 'CI Vulkan SDK packages' \
+              --notes 'Stable packages produced by the latest successful main-branch SDK build.' \
+              --prerelease
+          fi
+          gh release upload ci-latest release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
